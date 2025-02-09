@@ -1,0 +1,47 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="row justify-content-center">
+    <div class="col-md-8">
+        <div class="card">
+            <div class="card-header">
+                <h2 class="text-center">PDF Tabellen extrahieren</h2>
+            </div>
+            <div class="card-body">
+                <form action="{{ url_for('extract') }}" method="post" enctype="multipart/form-data" id="uploadForm">
+                    <div class="mb-3">
+                        <label for="file" class="form-label">PDF-Datei auswählen</label>
+                        <input type="file" class="form-control" id="file" name="file" accept=".pdf" required>
+                    </div>
+                    <div class="mb-3">
+                        <label for="format" class="form-label">Ausgabeformat</label>
+                        <select class="form-select" id="format" name="format">
+                            <option value="csv">CSV</option>
+                            <option value="xlsx">Excel</option>
+                        </select>
+                    </div>
+                    <div class="progress mb-3 d-none" id="progressBar">
+                        <div class="progress-bar progress-bar-striped progress-bar-animated" role="progressbar"></div>
+                    </div>
+                    <div class="d-grid">
+                        <button type="submit" class="btn btn-primary" id="submitBtn">
+                            <i class="fas fa-upload me-2"></i>Hochladen und Verarbeiten
+                        </button>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+</div>
+
+{% endblock %}
+
+{% block scripts %}
+<script>
+document.getElementById('uploadForm').onsubmit = function() {
+    document.getElementById('progressBar').classList.remove('d-none');
+    document.getElementById('submitBtn').disabled = true;
+    document.getElementById('submitBtn').innerHTML = '<i class="fas fa-spinner fa-spin me-2"></i>Verarbeite...';
+};
+</script>
+{% endblock %}

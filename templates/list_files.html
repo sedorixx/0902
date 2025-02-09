@@ -1,0 +1,42 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="card">
+    <div class="card-header">
+        <h2><i class="fas fa-file-pdf me-2"></i>Hochgeladene Dateien</h2>
+    </div>
+    <div class="card-body">
+        {% if files %}
+        <div class="table-responsive">
+            <table class="table table-hover">
+                <thead>
+                    <tr>
+                        <th>Dateiname</th>
+                        <th>Aktionen</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for file in files %}
+                    <tr>
+                        <td>{{ file }}</td>
+                        <td>
+                            <a href="{{ url_for('download_file', filename=file) }}" class="btn btn-sm btn-success me-2">
+                                <i class="fas fa-download me-1"></i>Download
+                            </a>
+                            <a href="{{ url_for('reprocess_file', filename=file) }}" class="btn btn-sm btn-primary">
+                                <i class="fas fa-sync me-1"></i>Neu verarbeiten
+                            </a>
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+        {% else %}
+        <div class="alert alert-info">
+            <i class="fas fa-info-circle me-2"></i>Keine Dateien vorhanden
+        </div>
+        {% endif %}
+    </div>
+</div>
+{% endblock %}

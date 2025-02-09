@@ -1,0 +1,215 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="card">
+    <div class="card-header d-flex justify-content-between align-items-center">
+        <h2 class="h5 mb-0">
+            <i class="fas fa-check-circle text-success me-2"></i>Verarbeitung abgeschlossen
+        </h2>
+        <div class="btn-group">
+            <button type="button" class="btn btn-sm btn-outline-secondary" id="toggleAll">
+                <i class="fas fa-eye me-1"></i>Alle Ein/Aus
+            </button>
+        </div>
+    </div>
+    <div class="card-body">
+        <div class="alert alert-success fade-in">
+            <i class="fas fa-info-circle me-2"></i>Die Tabellen wurden erfolgreich extrahiert!
+        </div>
+        
+        <!-- Verbesserte Suchfunktion -->
+        <div class="card mb-3 fade-in">
+            <div class="card-body bg-light">
+                <form id="searchForm" class="row g-3">
+                    <div class="col-md-8">
+                        <div class="input-group">
+                            <span class="input-group-text bg-white">
+                                <i class="fas fa-car"></i>
+                            </span>
+                            <input type="text" class="form-control" id="searchInput" 
+                                   placeholder="Fahrzeug suchen (z.B. Audi, BMW, Mercedes...)" 
+                                   autocomplete="off">
+                            <button type="button" class="btn btn-outline-secondary" id="clearSearch">
+                                <i class="fas fa-times"></i>
+                            </button>
+                        </div>
+                        <div class="form-text">Drücken Sie Enter zum Suchen oder nutzen Sie die Live-Suche</div>
+                    </div>
+                    <div class="col-md-4">
+                        <button type="submit" class="btn btn-primary w-100">
+                            <i class="fas fa-search me-2"></i>Suchen
+                        </button>
+                    </div>
+                </form>
+            </div>
+        </div>
+
+        <!-- Dynamische Ergebnisanzeige -->
+        <div id="searchResults" class="mb-3" style="display: none;">
+            <div class="card">
+                <div class="card-header">
+                    <h5 class="mb-0">Suchergebnisse</h5>
+                </div>
+                <div class="card-body" id="searchResultsContent">
+                </div>
+            </div>
+        </div>
+
+        <!-- Tabellen -->
+        <div id="allTables">
+            {% for table_data in tables %}
+            <div class="card mb-3 table-card fade-in" data-file-id="{{ files[loop.index0] }}">
+                <div class="card-header d-flex justify-content-between align-items-center">
+                    <h5 class="mb-0">
+                        <i class="fas fa-table me-2"></i>Tabelle {{ loop.index }}
+                    </h5>
+                    <div class="btn-group">
+                        <button type="button" class="btn btn-sm btn-outline-secondary toggle-table">
+                            <i class="fas fa-eye-slash"></i>
+                        </button>
+                        <a href="{{ url_for('download_file', filename=files[loop.index0]) }}" 
+                           class="btn btn-sm btn-success">
+                            <i class="fas fa-download me-1"></i>Download
+                        </a>
+                    </div>
+                </div>
+                <div class="card-body table-container">
+                    {{ table_data | safe }}
+                </div>
+            </div>
+            {% endfor %}
+        </div>
+
+        <div class="mt-3">
+            <a href="{{ url_for('index') }}" class="btn btn-primary">
+                <i class="fas fa-upload me-2"></i>Weitere Datei hochladen
+            </a>
+            <a href="{{ url_for('list_files') }}" class="btn btn-secondary">
+                <i class="fas fa-list me-2"></i>Alle Dateien anzeigen
+            </a>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+const searchForm = document.getElementById('searchForm');
+// const searchInput = document.getElementById('searchInput'); // This line is already declared above
+const clearSearch = document.getElementById('clearSearch');
+const searchResults = document.getElementById('searchResults');
+const searchResultsContent = document.getElementById('searchResultsContent');
+const allTables = document.getElementById('allTables');
+
+// Suchfunktion anpassen
+searchForm.addEventListener('submit', function(e) {
+    e.preventDefault();
+    const searchTerm = searchInput.value.trim();
+    
+    if (!searchTerm) {
+        resetSearch();
+        return;
+    }
+
+    // Sammle alle Tabellen-IDs
+    const tableCards = document.querySelectorAll('.table-card');
+    if (!tableCards.length) {
+        console.error('Keine Tabellen gefunden!');
+        return;
+    }
+
+    const fileIds = Array.from(tableCards).map(card => card.dataset.fileId);
+    console.log('Gefundene Tabellen-IDs:', fileIds);  // Debug-Log
+    
+    // Durchsuche alle Tabellen
+    performSearch(searchTerm, fileIds);
+});
+
+// Suche durchführen
+async function performSearch(searchTerm, fileIds) {
+    try {
+        console.log('Suche nach:', searchTerm);
+        console.log('PDF-ID:', fileIds[0]);  // Erste ID ist die PDF-ID
+
+        const response = await fetch('/search', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ 
+                search: searchTerm,
+                file_id: fileIds[0].split('_table_')[0]  // Extrahiere PDF-ID
+            })
+        });
+        
+        const data = await response.json();
+        console.log('Suchergebnisse:', data);  // Debug-Ausgabe
+        
+        searchResultsContent.innerHTML = data.html;
+        searchResults.style.display = 'block';
+        allTables.style.display = 'none';
+        
+        // Scroll zu den Ergebnissen
+        searchResults.scrollIntoView({ behavior: 'smooth' });
+    } catch (error) {
+        console.error('Suchfehler:', error);  // Debug-Ausgabe
+        searchResultsContent.innerHTML = '<div class="alert alert-danger">Fehler bei der Suche.</div>';
+        searchResults.style.display = 'block';
+    }
+}
+
+// Suche zurücksetzen
+function resetSearch() {
+    searchInput.value = '';
+    searchResults.style.display = 'none';
+    allTables.style.display = 'block';
+}
+
+// Clear-Button
+clearSearch.addEventListener('click', resetSearch);
+
+// Live-Suche anpassen
+searchInput.addEventListener('input', function(e) {
+    clearTimeout(searchTimeout);
+    if (!this.value.trim()) {
+        resetSearch();
+        return;
+    }
+    
+    // Verzögere die Suche um 300ms
+    searchTimeout = setTimeout(() => {
+        const tableCards = document.querySelectorAll('.table-card');
+        const fileIds = Array.from(tableCards).map(card => card.dataset.fileId);
+        performSearch(this.value.trim(), fileIds);
+    }, 300);
+});
+
+// Füge Toggle-Funktionalität hinzu
+document.getElementById('toggleAll').addEventListener('click', function() {
+    const containers = document.querySelectorAll('.table-container');
+    const isHidden = this.querySelector('i').classList.contains('fa-eye');
+    
+    containers.forEach(container => {
+        container.style.display = isHidden ? 'block' : 'none';
+    });
+    
+    this.querySelector('i').classList.toggle('fa-eye');
+    this.querySelector('i').classList.toggle('fa-eye-slash');
+});
+
+document.querySelectorAll('.toggle-table').forEach(btn => {
+    btn.addEventListener('click', function() {
+        const container = this.closest('.card').querySelector('.table-container');
+        const icon = this.querySelector('i');
+        
+        container.style.display = container.style.display === 'none' ? 'block' : 'none';
+        icon.classList.toggle('fa-eye');
+        icon.classList.toggle('fa-eye-slash');
+    });
+});
+
+// Verbesserte Suchfunktion mit Feedback
+const searchInput = document.getElementById('searchInput');
+searchInput.addEventListener('input', function() {
+    this.classList.toggle('is-valid', this.value.length >= 2);
+});
+</script>
+{% endblock %}
