@@ -23,17 +23,22 @@
                 <form id="searchForm" class="row g-3">
                     <div class="col-md-8">
                         <div class="input-group">
-                            <span class="input-group-text bg-white">
+                            <span class="input-group-text bg-white" data-bs-toggle="tooltip" title="Fahrzeugsuche">
                                 <i class="fas fa-car"></i>
                             </span>
                             <input type="text" class="form-control" id="searchInput" 
                                    placeholder="Fahrzeug suchen (z.B. Audi, BMW, Mercedes...)" 
-                                   autocomplete="off">
+                                   autocomplete="off"
+                                   data-bs-toggle="tooltip"
+                                   title="Geben Sie einen Suchbegriff ein">
                             <button type="button" class="btn btn-outline-secondary" id="clearSearch">
                                 <i class="fas fa-times"></i>
                             </button>
                         </div>
-                        <div class="form-text">Drücken Sie Enter zum Suchen oder nutzen Sie die Live-Suche</div>
+                        <div class="form-text">
+                            <i class="fas fa-info-circle me-1"></i>
+                            Live-Suche startet automatisch nach Eingabe
+                        </div>
                     </div>
                     <div class="col-md-4">
                         <button type="submit" class="btn btn-primary w-100">
@@ -55,7 +60,7 @@
             </div>
         </div>
 
-        <!-- Tabellen -->
+        <!-- Verbesserte Tabellenansicht -->
         <div id="allTables">
             {% for table_data in tables %}
             <div class="card mb-3 table-card fade-in" data-file-id="{{ files[loop.index0] }}">
@@ -64,17 +69,21 @@
                         <i class="fas fa-table me-2"></i>Tabelle {{ loop.index }}
                     </h5>
                     <div class="btn-group">
-                        <button type="button" class="btn btn-sm btn-outline-secondary toggle-table">
+                        <button type="button" class="btn btn-sm btn-outline-secondary toggle-table" 
+                                data-bs-toggle="tooltip" title="Tabelle ein-/ausblenden">
                             <i class="fas fa-eye-slash"></i>
                         </button>
                         <a href="{{ url_for('download_file', filename=files[loop.index0]) }}" 
-                           class="btn btn-sm btn-success">
+                           class="btn btn-sm btn-success"
+                           data-bs-toggle="tooltip" title="Tabelle herunterladen">
                             <i class="fas fa-download me-1"></i>Download
                         </a>
                     </div>
                 </div>
-                <div class="card-body table-container">
-                    {{ table_data | safe }}
+                <div class="card-body table-responsive p-0">
+                    <div class="table-container">
+                        {{ table_data | safe }}
+                    </div>
                 </div>
             </div>
             {% endfor %}
@@ -94,122 +103,249 @@
 
 {% block scripts %}
 <script>
-const searchForm = document.getElementById('searchForm');
-// const searchInput = document.getElementById('searchInput'); // This line is already declared above
-const clearSearch = document.getElementById('clearSearch');
-const searchResults = document.getElementById('searchResults');
-const searchResultsContent = document.getElementById('searchResultsContent');
-const allTables = document.getElementById('allTables');
+$(document).ready(function() {
+    const searchForm = $('#searchForm');
+    const searchInput = $('#searchInput');
+    const clearSearch = $('#clearSearch');
+    const searchResults = $('#searchResults');
+    const searchResultsContent = $('#searchResultsContent');
+    const allTables = $('#allTables');
+    let searchTimeout;
 
-// Suchfunktion anpassen
-searchForm.addEventListener('submit', function(e) {
-    e.preventDefault();
-    const searchTerm = searchInput.value.trim();
-    
-    if (!searchTerm) {
-        resetSearch();
-        return;
+    // Verbesserte Suchfunktion
+    async function performSearch(searchTerm, fileId) {
+        try {
+            showLoading();
+            searchResultsContent.html('<div class="text-center p-5"><i class="fas fa-spinner fa-spin fa-2x"></i><p class="mt-2">Suche läuft...</p></div>');
+            searchResults.show();
+            
+            const response = await fetch('/search', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({
+                    search: searchTerm,
+                    file_id: fileId
+                })
+            });
+
+            if (!response.ok) throw new Error('Netzwerkfehler');
+            const data = await response.json();
+            displaySearchResults(data);
+            
+        } catch (error) {
+            console.error('Suchfehler:', error);
+            toastr.error('Fehler bei der Suche');
+            searchResultsContent.html(`
+                <div class="alert alert-danger">
+                    <div class="d-flex align-items-center">
+                        <i class="fas fa-exclamation-triangle me-3 fa-2x"></i>
+                        <div>
+                            <h5 class="mb-1">Suchfehler</h5>
+                            <p class="mb-0">${error.message}</p>
+                        </div>
+                    </div>
+                </div>`);
+        } finally {
+            hideLoading();
+        }
     }
 
-    // Sammle alle Tabellen-IDs
-    const tableCards = document.querySelectorAll('.table-card');
-    if (!tableCards.length) {
-        console.error('Keine Tabellen gefunden!');
-        return;
+    // Verbesserte Suchergebnisdarstellung
+    function displaySearchResults(data) {
+        if (data.status === 'success') {
+            const resultHtml = `
+                <div class="search-results-header mb-3">
+                    <div class="d-flex justify-content-between align-items-center">
+                        <h5 class="mb-0">
+                            <i class="fas fa-search me-2"></i>
+                            <span class="search-count">${data.count} Treffer gefunden</span>
+                        </h5>
+                        <div class="btn-group">
+                            <button type="button" class="btn btn-sm btn-outline-secondary" id="printResults">
+                                <i class="fas fa-print me-1"></i>Drucken
+                            </button>
+                            <button type="button" class="btn btn-sm btn-outline-secondary" id="exportResults">
+                                <i class="fas fa-file-export me-1"></i>Exportieren
+                            </button>
+                            <button type="button" class="btn btn-sm btn-outline-secondary" id="backToTables">
+                                <i class="fas fa-arrow-left me-1"></i>Zurück
+                            </button>
+                        </div>
+                    </div>
+                </div>
+                <div class="search-results-content">
+                    ${data.html}
+                </div>`;
+            
+            searchResultsContent.html(resultHtml);
+            allTables.hide();
+            searchResults.show();
+            toastr.success(`${data.count} Treffer gefunden`);
+            
+            // Initialisiere DataTables für die Suchergebnisse
+            searchResultsContent.find('table').each(function() {
+                $(this).DataTable({
+                    destroy: true,
+                    order: [],
+                    pageLength: 10,
+                    responsive: true,
+                    language: {
+                        url: "https://cdn.datatables.net/plug-ins/1.11.5/i18n/de-DE.json"
+                    },
+                    dom: 'Bfrtip',
+                    buttons: [
+                        'copy', 'excel', 'pdf'
+                    ]
+                });
+            });
+
+            // Event Handler für die Buttons
+            $('#printResults').on('click', function() {
+                window.print();
+            });
+
+            $('#exportResults').on('click', function() {
+                const table = searchResultsContent.find('table').first();
+                if (table.length) {
+                    const csv = [];
+                    table.find('tr').each(function() {
+                        const row = [];
+                        $(this).find('th,td').each(function() {
+                            row.push('"' + $(this).text().replace(/"/g, '""') + '"');
+                        });
+                        csv.push(row.join(','));
+                    });
+                    const blob = new Blob([csv.join('\n')], { type: 'text/csv;charset=utf-8;' });
+                    const link = document.createElement('a');
+                    link.href = URL.createObjectURL(blob);
+                    link.download = 'suchergebnisse.csv';
+                    link.click();
+                }
+            });
+
+            $('#backToTables').on('click', function() {
+                searchResults.hide();
+                allTables.show();
+                searchInput.val('');
+            });
+        } else if (data.status === 'no_results') {
+            const noResultsHtml = `
+                <div class="alert alert-info">
+                    <div class="d-flex align-items-center">
+                        <i class="fas fa-info-circle me-3 fa-2x"></i>
+                        <div>
+                            <h5 class="mb-1">Keine Treffer gefunden</h5>
+                            <p class="mb-0">Für "${searchInput.val()}" wurden keine Ergebnisse gefunden.</p>
+                        </div>
+                    </div>
+                    <div class="mt-3">
+                        <button type="button" class="btn btn-outline-primary btn-sm" id="backToTables">
+                            <i class="fas fa-arrow-left me-1"></i>Zurück zur Übersicht
+                        </button>
+                    </div>
+                </div>`;
+            searchResultsContent.html(noResultsHtml);
+            searchResults.show();
+            toastr.info('Keine Treffer gefunden');
+            
+            $('#backToTables').on('click', function() {
+                searchResults.hide();
+                allTables.show();
+                searchInput.val('');
+            });
+        }
     }
 
-    const fileIds = Array.from(tableCards).map(card => card.dataset.fileId);
-    console.log('Gefundene Tabellen-IDs:', fileIds);  // Debug-Log
-    
-    // Durchsuche alle Tabellen
-    performSearch(searchTerm, fileIds);
-});
+    // Event Handler für Suchformular
+    searchForm.on('submit', function(e) {
+        e.preventDefault();
+        const searchTerm = searchInput.val().trim();
+        if (!searchTerm) return;
 
-// Suche durchführen
-async function performSearch(searchTerm, fileIds) {
-    try {
-        console.log('Suche nach:', searchTerm);
-        console.log('PDF-ID:', fileIds[0]);  // Erste ID ist die PDF-ID
+        const firstTable = $('.table-card').first();
+        if (firstTable.length === 0) {
+            console.error('Keine Tabellen gefunden');
+            return;
+        }
+        
+        // Extrahiere nur den PDF-Namen ohne _table_ Teil
+        const fileId = firstTable.data('fileId').split('_table_')[0];
+        console.log('Extrahierte PDF-ID:', fileId); // Debug-Ausgabe
+        performSearch(searchTerm, fileId);
+    });
 
-        const response = await fetch('/search', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ 
-                search: searchTerm,
-                file_id: fileIds[0].split('_table_')[0]  // Extrahiere PDF-ID
-            })
+    clearSearch.on('click', function() {
+        searchInput.val('');
+        searchResults.hide();
+        allTables.show();
+    });
+
+    // Live-Suche mit Verzögerung
+    searchInput.on('input', function() {
+        clearTimeout(searchTimeout);
+        const searchTerm = $(this).val().trim();
+        
+        if (!searchTerm) {
+            clearSearch.click();
+            return;
+        }
+
+        searchTimeout = setTimeout(() => {
+            const firstTable = $('.table-card').first();
+            if (firstTable.length > 0) {
+                const fileId = firstTable.data('fileId').split('_table_')[0];
+                performSearch(searchTerm, fileId);
+            }
+        }, 300);
+    });
+
+    // Initialisiere DataTables für alle vorhandenen Tabellen
+    $('.table').each(function() {
+        $(this).DataTable({
+            order: [],
+            destroy: true
         });
-        
-        const data = await response.json();
-        console.log('Suchergebnisse:', data);  // Debug-Ausgabe
-        
-        searchResultsContent.innerHTML = data.html;
-        searchResults.style.display = 'block';
-        allTables.style.display = 'none';
-        
-        // Scroll zu den Ergebnissen
-        searchResults.scrollIntoView({ behavior: 'smooth' });
-    } catch (error) {
-        console.error('Suchfehler:', error);  // Debug-Ausgabe
-        searchResultsContent.innerHTML = '<div class="alert alert-danger">Fehler bei der Suche.</div>';
-        searchResults.style.display = 'block';
-    }
-}
-
-// Suche zurücksetzen
-function resetSearch() {
-    searchInput.value = '';
-    searchResults.style.display = 'none';
-    allTables.style.display = 'block';
-}
-
-// Clear-Button
-clearSearch.addEventListener('click', resetSearch);
-
-// Live-Suche anpassen
-searchInput.addEventListener('input', function(e) {
-    clearTimeout(searchTimeout);
-    if (!this.value.trim()) {
-        resetSearch();
-        return;
-    }
-    
-    // Verzögere die Suche um 300ms
-    searchTimeout = setTimeout(() => {
-        const tableCards = document.querySelectorAll('.table-card');
-        const fileIds = Array.from(tableCards).map(card => card.dataset.fileId);
-        performSearch(this.value.trim(), fileIds);
-    }, 300);
-});
-
-// Füge Toggle-Funktionalität hinzu
-document.getElementById('toggleAll').addEventListener('click', function() {
-    const containers = document.querySelectorAll('.table-container');
-    const isHidden = this.querySelector('i').classList.contains('fa-eye');
-    
-    containers.forEach(container => {
-        container.style.display = isHidden ? 'block' : 'none';
     });
-    
-    this.querySelector('i').classList.toggle('fa-eye');
-    this.querySelector('i').classList.toggle('fa-eye-slash');
-});
-
-document.querySelectorAll('.toggle-table').forEach(btn => {
-    btn.addEventListener('click', function() {
-        const container = this.closest('.card').querySelector('.table-container');
-        const icon = this.querySelector('i');
-        
-        container.style.display = container.style.display === 'none' ? 'block' : 'none';
-        icon.classList.toggle('fa-eye');
-        icon.classList.toggle('fa-eye-slash');
-    });
-});
-
-// Verbesserte Suchfunktion mit Feedback
-const searchInput = document.getElementById('searchInput');
-searchInput.addEventListener('input', function() {
-    this.classList.toggle('is-valid', this.value.length >= 2);
 });
 </script>
+
+<style>
+/* Verbesserte Styles für Suchergebnisse */
+.search-results-header {
+    background-color: #f8f9fa;
+    padding: 1rem;
+    border-radius: 0.25rem;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+}
+
+.search-results-content {
+    margin-top: 1rem;
+}
+
+.search-count {
+    color: #0d6efd;
+    font-weight: 500;
+}
+
+/* Print Styles */
+@media print {
+    .navbar, .btn-group, .dataTables_wrapper .dt-buttons,
+    .dataTables_wrapper .dataTables_filter,
+    .dataTables_wrapper .dataTables_length,
+    .dataTables_wrapper .dataTables_paginate {
+        display: none !important;
+    }
+    
+    .card {
+        border: none !important;
+        box-shadow: none !important;
+    }
+    
+    .table {
+        width: 100% !important;
+        margin: 0 !important;
+        border: 1px solid #dee2e6 !important;
+    }
+}
+</style>
 {% endblock %}
