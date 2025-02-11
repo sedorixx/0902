@@ -6,6 +6,26 @@ import re  # Add this import
 import jpype
 import pdfplumber  # Am Anfang der Datei bei den anderen Imports
 
+def install_package(package):
+    """Installiert ein Python-Paket über pip"""
+    try:
+        subprocess.check_call([sys.executable, "-m", "pip", "install", package])
+        print(f"Paket {package} erfolgreich installiert")
+        return True
+    except subprocess.CalledProcessError as e:
+        print(f"Fehler bei der Installation von {package}: {e}")
+        return False
+
+# Stelle sicher, dass pdfplumber installiert ist
+try:
+    import pdfplumber
+except ImportError:
+    if install_package('pdfplumber'):
+        import pdfplumber
+    else:
+        print("Fehler: Konnte pdfplumber nicht installieren")
+        sys.exit(1)
+
 required_packages = {
     'flask': 'Flask',
     'pandas': 'pandas',
@@ -842,6 +862,27 @@ def init_db():
     with app.app_context():
         db.create_all()
 
+# Verbesserte Thread-Handhabung
+def cleanup_on_shutdown():
+    """Führt sauberes Herunterfahren durch"""
+    try:
+        # Beende alle aktiven Threads
+        for thread in threading.enumerate():
+            if thread is not threading.current_thread():
+                try:
+                    thread.join(timeout=1.0)
+                except Exception as e:
+                    print(f"Fehler beim Beenden des Threads {thread.name}: {e}")
+        
+        # Bereinige Dateien
+        cleanup_temp_files()
+        
+        # Fahre JVM herunter
+        shutdown_jvm()
+        
+    except Exception as e:
+        print(f"Fehler beim Herunterfahren: {e}")
+
 if __name__ == '__main__':
     try:
         # Initialize database
@@ -851,27 +892,24 @@ if __name__ == '__main__':
         debug_mode = os.environ.get('FLASK_DEBUG', 'True').lower() == 'true'
         port = int(os.environ.get('FLASK_PORT', 5000))
         
-        # Bereite die Liste der zu überwachenden Dateien vor
-        extra_files = []
-        if os.path.exists('./templates'):
-            extra_files.extend([os.path.join('./templates', f) for f in os.listdir('./templates')])
-        if os.path.exists('./static'):
-            extra_files.extend([os.path.join('./static', f) for f in os.listdir('./static')])
-        
         # Initialisiere JVM vor dem Start des Servers
         initialize_jvm()
         
         # Stelle sicher, dass der temporäre Ordner existiert und leer ist
         cleanup_temp_files()
         
-        # Verwenden Sie den eingebauten Debugger von Flask, um das Problem zu umgehen
+        # Registriere Cleanup-Funktion
+        atexit.register(cleanup_on_shutdown)
+        
+        # Starte Flask-Server
         app.run(
             host='127.0.0.1',
             port=port,
             debug=debug_mode,
-            use_reloader=False  # Deaktivieren Sie den Werkzeug-Reloader
+            use_reloader=False
         )
+    except Exception as e:
+        print(f"Fehler beim Starten der Anwendung: {e}")
     finally:
-        # Stelle sicher, dass die JVM beim Beenden heruntergefahren wird
-        shutdown_jvm()
+        cleanup_on_shutdown()
 
