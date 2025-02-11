@@ -1,0 +1,35 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="card">
+    <div class="card-header">
+        <h2><i class="fas fa-list-ul me-2"></i>Auflagencodes</h2>
+    </div>
+    <div class="card-body">
+        {% if condition_codes %}
+        <div class="table-responsive">
+            <table class="table table-hover">
+                <thead>
+                    <tr>
+                        <th>Code</th>
+                        <th>Beschreibung</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for code in condition_codes %}
+                    <tr>
+                        <td class="text-center"><strong>{{ code.code }}</strong></td>
+                        <td>{{ code.description }}</td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+        {% else %}
+        <div class="alert alert-info">
+            <i class="fas fa-info-circle me-2"></i>Keine Auflagencodes gefunden
+        </div>
+        {% endif %}
+    </div>
+</div>
+{% endblock %}

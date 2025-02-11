@@ -2,14 +2,19 @@ import sys
 import subprocess
 import threading
 import tempfile
-# import pkg_resources # removed
+import re  # Add this import
+import jpype
+import pdfplumber  # Am Anfang der Datei bei den anderen Imports
 
 required_packages = {
     'flask': 'Flask',
     'pandas': 'pandas',
     'tabula-py': 'tabula',
     'jpype1': 'jpype',
-    'openpyxl': 'openpyxl'
+    'tabula-py': 'tabula',
+    'jpype1': 'jpype',
+    'openpyxl': 'openpyxl',
+    'pdfplumber': 'pdfplumber'  # Neue Abhängigkeit
 }
 
 def check_and_install_packages():
@@ -32,6 +37,9 @@ from werkzeug.utils import secure_filename
 import tabula
 import jpype
 import threading
+from flask_sqlalchemy import SQLAlchemy
+from extensions import db
+from models import AuflagenCode
 
 app = Flask(__name__)
 app.config['UPLOAD_FOLDER'] = tempfile.mkdtemp()
@@ -40,7 +48,16 @@ app.config['MAX_CONTENT_LENGTH'] = 16 * 1024 * 1024  # 16MB max-limit
 # Neue Konfigurationsoptionen für besseres Neuladen
 app.config['TEMPLATES_AUTO_RELOAD'] = True
 app.jinja_env.auto_reload = True
-app.config['SEND_FILE_MAX_AGE_DEFAULT'] = 0
+app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///auflagen.db'
+app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
+
+# Initialize the db with the Flask app
+db.init_app(app)
+
+# Remove these lines:
+# @app.before_first_request
+# def create_tables():
+#     db.create_all()
 
 # Überprüfe Abhängigkeiten beim Start
 try:
@@ -282,6 +299,226 @@ def cleanup_temp_files():
 import atexit
 atexit.register(cleanup_temp_files)
 
+# Definiere Auflagen-Codes und Texte getrennt
+AUFLAGEN_CODES = [
+    "155", 
+    "A01", "A02", "A03", "A04", "A05", "A06", "A07", "A08", "A09", "A10",
+    "A11", "A12", "A13", "A14", "A14a", "A15", "A58"
+]
+
+AUFLAGEN_TEXTE = {
+    "155": "Das Sonderrad (gepr. Radlast) ist in Verbindung mit dieser Reifengröße nur zulässig bis zu einer zul. Achslast von 1550 kg...",
+    "A01": "Nach Durchführung der Technischen Änderung ist das Fahrzeug unter Vorlage der vorliegenden ABE unverzüglich einem amtlich anerkannten Sachverständigen einer Technischen Prüfstelle vorzuführen.",
+    "A02": "Die Verwendung der Rad-/Reifenkombination ist nur zulässig an Fahrzeugen mit serienmäßiger Rad-/Reifenkombination in den Größen gemäß Fahrzeugpapieren.",
+    "A03": "Die Verwendung der Rad-/Reifenkombination ist nur zulässig, sofern diese in den entsprechenden Fahrzeugpapieren eingetragen ist.",
+    "A04": "Die Rad-/Reifenkombination ist nur zulässig für Fahrzeugausführungen mit Allradantrieb.",
+    "A05": "Die Rad-/Reifenkombination ist nur zulässig für Fahrzeugausführungen mit Heckantrieb.",
+    "A06": "Die Rad-/Reifenkombination ist nur zulässig für Fahrzeugausführungen mit Frontantrieb.",
+    "A07": "Die mindestens erforderlichen Geschwindigkeitsbereiche (PR-Zahl) und Tragfähigkeiten der verwendeten Reifen sind den Fahrzeugpapieren zu entnehmen.",
+    "A08": "Verwendung nur zulässig an Fahrzeugen mit serienmäßiger Rad-/Reifenkombination gemäß EG-Typgenehmigung.",
+    "A09": "Die Rad-/Reifenkombination ist nur an der Vorderachse zulässig.",
+    "A10": "Es dürfen nur feingliedrige Schneeketten an der Hinterachse verwendet werden.",
+    "A11": "Es dürfen nur feingliedrige Schneeketten an der Antriebsachse verwendet werden.",
+    "A12": "Die Verwendung von Schneeketten ist nicht zulässig.",
+    "A13": "Nur zulässig für Fahrzeuge ohne Schneekettenbetrieb.",
+    "A14": "Zum Auswuchten der Räder dürfen an der Felgenaußenseite nur Klebegewichte unterhalb der Felgenschulter angebracht werden.",
+    "A14a": "Zum Auswuchten der Räder dürfen an der Felgenaußenseite keine Gewichte angebracht werden.",
+    "A15": "Die Verwendung des Rades mit genannter Einpresstiefe ist nur zulässig, wenn das Fahrzeug serienmäßig mit Rädern dieser Einpresstiefe ausgerüstet ist.",
+    "A58": "Rad-/Reifenkombination(en) nicht zulässig an Fahrzeugen mit Allradantrieb.",
+    "Lim": "Nur zulässig für Limousinen-Ausführungen des Fahrzeugtyps.",
+    "NoH": "Die Verwendung an Fahrzeugen mit Niveauregulierung ist nicht zulässig."
+}
+
+def extract_auflagen_with_text(pdf_path):
+    """Extrahiert Auflagen-Codes und deren zugehörige Texte aus der PDF"""
+    codes_with_text = {}
+    excluded_texts = [
+        "Technologiezentrum Typprüfstelle Lambsheim - Königsberger Straße 20d - D-67245 Lambsheim",
+    ]
+    collect_text = True  # Flag für die Textsammlung
+    current_section = ""  # Buffer für den aktuellen Textabschnitt
+
+    try:
+        with app.app_context():
+            db_codes = {code.code: code.description for code in AuflagenCode.query.all()}
+        
+        with pdfplumber.open(pdf_path) as pdf:
+            for page in pdf.pages:
+                text = page.extract_text()
+                if not text:
+                    continue
+
+                lines = text.split('\n')
+                for line in lines:
+                    line = line.strip()
+                    
+                    # Prüfe auf Ende der Auflagen
+                    if "Prüfort und Prüfdatum" in line:
+                        print("Extraktion beendet - 'Prüfort und Prüfdatum' gefunden")
+                        # Speichere letzten Abschnitt vor dem Beenden
+                        if current_section:
+                            code_match = re.match(r'^([A-Z][0-9]{1,3}[a-z]?|[0-9]{2,3})[\s\.:)](.+)', current_section)
+                            if code_match:
+                                code = code_match.group(1).strip()
+                                description = code_match.group(2).strip()
+                                if code in db_codes:
+                                    codes_with_text[code] = description
+                                    print(f"Letzter Code gespeichert: {code}")
+                        return codes_with_text  # Beende die Funktion sofort
+                    
+                    # Prüfe auf "Technologiezentrum"
+                    if "Technologiezentrum" in line:
+                        print("Technologie gefunden - Pausiere Extraktion")
+                        collect_text = False
+                        current_section = ""  # Verwerfe aktuellen Abschnitt
+                        continue
+
+                    # Prüfe auf neuen Auflagen-Code
+                    if re.match(r'^([A-Z][0-9]{1,3}[a-z]?|[0-9]{2,3})[\s\.:)]', line):
+                        print(f"Neuer Code gefunden: {line[:20]}...")
+                        
+                        # Speichere vorherigen Abschnitt wenn vorhanden
+                        if collect_text and current_section:
+                            code_match = re.match(r'^([A-Z][0-9]{1,3}[a-z]?|[0-9]{2,3})[\s\.:)](.+)', current_section)
+                            if code_match:
+                                code = code_match.group(1).strip()
+                                description = code_match.group(2).strip()
+                                if code in db_codes:
+                                    codes_with_text[code] = description
+                                    print(f"Gespeichert: {code}")
+                        
+                        collect_text = True  # Setze Extraktion fort
+                        current_section = line  # Starte neuen Abschnitt
+                        continue
+
+                    # Sammle Text wenn aktiv
+                    if collect_text and current_section:
+                        current_section += " " + line
+
+    except Exception as e:
+        print(f"Fehler beim Extrahieren der Auflagen-Texte: {str(e)}")
+        import traceback
+        print(traceback.format_exc())
+    
+    # Bereinige die gesammelten Texte
+    for code, text in codes_with_text.items():
+        text = re.sub(r'\s+', ' ', text)  # Entferne mehrfache Leerzeichen
+        text = text.strip()
+        codes_with_text[code] = text
+        print(f"Finaler Code {code}: {text[:100]}...")
+
+    return codes_with_text
+
+def save_to_database(codes_with_text):
+    """Speichert oder aktualisiert Auflagen-Codes und Texte in der Datenbank"""
+    try:
+        with app.app_context():
+            for code, description in codes_with_text.items():
+                # Prüfe, ob der Code bereits existiert
+                existing_code = AuflagenCode.query.filter_by(code=code).first()
+                
+                if existing_code:
+                    # Aktualisiere nur, wenn der Text sich geändert hat
+                    if existing_code.description != description:
+                        existing_code.description = description
+                        print(f"Aktualisiere Code {code} in der Datenbank")
+                else:
+                    # Füge neuen Code hinzu
+                    new_code = AuflagenCode(code=code, description=description)
+                    db.session.add(new_code)
+                    print(f"Füge neuen Code {code} zur Datenbank hinzu")
+            
+            db.session.commit()
+            print("Datenbank erfolgreich aktualisiert")
+            
+    except Exception as e:
+        print(f"Fehler beim Speichern in der Datenbank: {str(e)}")
+        db.session.rollback()
+
+def extract_auflagen_codes(tables):
+    codes = set()
+    code_pattern = re.compile(r"""
+        (?:
+            [A-Z][0-9]{1,3}[a-z]?|    # Bsp: A01, B123a
+            [0-9]{2,3}[A-Z]?|          # Bsp: 155, 12A
+            NoH|Lim                     # Spezielle Codes
+        )
+    """, re.VERBOSE)
+    
+    # Explizit erlaubte Spalten
+    allowed_columns = {
+        'reifenbezogene auflagen und hinweise',
+        'auflagen und hinweise',
+        'auflagen'
+    }
+
+    # Explizit ausgeschlossene Spalten
+    excluded_columns = {
+        'handelsbezeichnung',
+        'fahrzeug-typ',
+        'abe/ewg-nr',
+        'fahrzeugtyp',
+        'typ',
+        'abe',
+        'ewg-nr'
+    }
+
+    for table in tables:
+        # Konvertiere alle Werte zu Strings und normalisiere Spaltennamen
+        table_str = table.astype(str)
+        
+        # Normalisiere Spaltennamen (zu Kleinbuchstaben und ohne Sonderzeichen)
+        normalized_columns = {
+            col: col.strip().lower().replace('/', '').replace('-', '').replace(' ', '')
+            for col in table_str.columns
+        }
+
+        for original_col, normalized_col in normalized_columns.items():
+            # Überspringe explizit ausgeschlossene Spalten
+            if any(excl in normalized_col for excl in excluded_columns):
+                continue
+                
+            # Prüfe nur erlaubte Spalten
+            if any(allowed in normalized_col for allowed in allowed_columns):
+                for value in table_str[original_col]:
+                    matches = code_pattern.findall(str(value))
+                    codes.update(matches)
+    
+    # Extrahiere auch die Auflagen-Texte aus der PDF
+    pdf_path = os.path.join(app.config['UPLOAD_FOLDER'], request.files['file'].filename)
+    extracted_texts = extract_auflagen_with_text(pdf_path)
+    print(f"Gefundene Auflagen-Texte: {len(extracted_texts)}")  # Debug-Ausgabe
+    for code, text in extracted_texts.items():
+        print(f"Code {code}: {text[:100]}...")  # Debug-Ausgabe
+    
+    # Modifizierte Logik für das Speichern der Codes mit Texten
+    with app.app_context():
+        existing_codes = set(code.code for code in AuflagenCode.query.all())
+        new_codes = codes - existing_codes
+        
+        for code in new_codes:
+            description = extracted_texts.get(code)  # Versuche zuerst den extrahierten Text
+            if not description:  # Falls nicht gefunden, verwende Standard-Text
+                description = AUFLAGEN_TEXTE.get(code, "Keine Beschreibung verfügbar")
+            
+            new_code = AuflagenCode(
+                code=code,
+                description=description
+            )
+            db.session.add(new_code)
+        db.session.commit()
+
+    # Kombiniere gefundene Codes mit ihren Texten
+    codes_with_text = {}
+    for code in codes:
+        description = extracted_texts.get(code, AUFLAGEN_TEXTE.get(code, "Keine Beschreibung verfügbar"))
+        codes_with_text[code] = description
+    
+    # Speichere in der Datenbank
+    save_to_database(codes_with_text)
+    
+    return sorted(list(codes))
+
 @app.route('/extract', methods=['POST'])
 def extract():
     if not check_java():
@@ -334,6 +571,19 @@ def extract():
             temp_storage.add_file(output_filename)  # Markiere Tabelle als aktiv
             results.append(output_filename)
         
+        # Extrahiere Auflagen-Codes und deren Texte
+        auflagen_codes = extract_auflagen_codes(tables)
+        extracted_texts = extract_auflagen_with_text(pdf_path)
+        
+        # Erstelle Liste von AuflagenCode-Objekten mit den extrahierten Texten
+        condition_codes = [
+            AuflagenCode(
+                code=code, 
+                description=extracted_texts.get(code, AUFLAGEN_TEXTE.get(code, "Keine Beschreibung verfügbar"))
+            )
+            for code in auflagen_codes
+        ]
+        
         if not results:
             return "Keine Tabellen in der PDF-Datei gefunden.", 400
             
@@ -348,7 +598,8 @@ def extract():
         
         return render_template('results.html', 
                             files=results, 
-                            tables=table_htmls, 
+                            tables=table_htmls,
+                            condition_codes=condition_codes,
                             pdf_file=filename)
         
     except Exception as e:
@@ -583,8 +834,15 @@ def cleanup_temp_files():
     """Bereinigt alle inaktiven temporären Dateien"""
     temp_storage.cleanup_inactive()
 
+def init_db():
+    with app.app_context():
+        db.create_all()
+
 if __name__ == '__main__':
     try:
+        # Initialize database
+        init_db()
+        
         # Verbesserte Entwicklungsumgebung-Konfiguration
         debug_mode = os.environ.get('FLASK_DEBUG', 'True').lower() == 'true'
         port = int(os.environ.get('FLASK_PORT', 5000))
@@ -597,6 +855,7 @@ if __name__ == '__main__':
             extra_files.extend([os.path.join('./static', f) for f in os.listdir('./static')])
         
         # Initialisiere JVM vor dem Start des Servers
+            extra_files.extend([os.path.join('./static', f) for f in os.listdir('./static')])
         initialize_jvm()
         
         # Stelle sicher, dass der temporäre Ordner existiert und leer ist
@@ -610,11 +869,7 @@ if __name__ == '__main__':
             reloader_type='stat',
             extra_files=extra_files
         )
-    except Exception as e:
-        print(f"Server-Fehler: {e}")
-        # Fahre JVM nur beim Beenden herunter
-        shutdown_jvm()
-        sys.exit(1)
     finally:
         # Stelle sicher, dass die JVM beim Beenden heruntergefahren wird
         shutdown_jvm()
+
