@@ -78,7 +78,11 @@ def check_java():
         import subprocess
         subprocess.check_output(['java', '-version'], stderr=subprocess.STDOUT)
         return True
-    except:
+    except subprocess.CalledProcessError as e:
+        print(f"Fehler bei der Überprüfung der Java-Installation: {e.output.decode()}")
+        return False
+    except FileNotFoundError:
+        print("Java ist nicht installiert oder der 'java' Befehl ist nicht im PATH.")
         return False
 
 def is_valid_table(df):
@@ -168,20 +172,17 @@ def clean_vehicle_data(df):
         return df
 
 def initialize_jvm():
-    """Initialisiert die JVM mit Fallback-Mechanismus"""
+    """Initialisiert die JVM mit Fehlerbehandlung"""
     try:
         if not jpype.isJVMStarted():
-            jpype.getDefaultJVMPath()  # Prüfe zuerst den JVM-Pfad
-            jpype.startJVM(
-                jpype.getDefaultJVMPath(),
-                "-Djava.class.path=/usr/share/java/tabula-java.jar",
-                convertStrings=False,
-                interrupt=True
-            )
-            return True
+            jvm_path = jpype.getDefaultJVMPath()
+            if not os.path.exists(jvm_path):
+                raise FileNotFoundError(f"JVM shared library file not found: {jvm_path}")
+            jpype.startJVM(jvm_path, convertStrings=False)  # Verhindert automatische String-Konvertierung
     except Exception as e:
         print(f"JVM Initialisierungsfehler: {str(e)}")
-        return False
+        print("Verwende Fallback-Methode...")
+        # Hier könnte eine alternative Implementierung erfolgen
 
 def process_pdf_with_encoding(filepath, output_format):
     """Verarbeitet PDF mit verbesserter Tabellenerkennung und extrahiert alle Tabellen"""
@@ -239,7 +240,7 @@ def process_pdf_with_encoding(filepath, output_format):
 @app.route('/', methods=['GET'])
 def index():
     if not check_java():
-        return "Fehler: Java muss installiert sein, um diese Anwendung zu nutzen.", 500
+        return "Fehler: Java muss installiert sein, um diese Anwendung zu nutzen. Bitte installieren Sie Java und stellen Sie sicher, dass der 'java' Befehl im PATH ist.", 500
     return render_template('index.html')
 
 def convert_table_to_html(df):
@@ -799,7 +800,10 @@ def initialize_jvm():
     """Initialisiert die JVM mit Fehlerbehandlung"""
     try:
         if not jpype.isJVMStarted():
-            jpype.startJVM(convertStrings=False)  # Verhindert automatische String-Konvertierung
+            jvm_path = jpype.getDefaultJVMPath()
+            if not os.path.exists(jvm_path):
+                raise FileNotFoundError(f"JVM shared library file not found: {jvm_path}")
+            jpype.startJVM(jvm_path, convertStrings=False)  # Verhindert automatische String-Konvertierung
     except Exception as e:
         print(f"JVM Initialisierungsfehler: {str(e)}")
         print("Verwende Fallback-Methode...")
@@ -855,19 +859,17 @@ if __name__ == '__main__':
             extra_files.extend([os.path.join('./static', f) for f in os.listdir('./static')])
         
         # Initialisiere JVM vor dem Start des Servers
-            extra_files.extend([os.path.join('./static', f) for f in os.listdir('./static')])
         initialize_jvm()
         
         # Stelle sicher, dass der temporäre Ordner existiert und leer ist
         cleanup_temp_files()
         
+        # Verwenden Sie den eingebauten Debugger von Flask, um das Problem zu umgehen
         app.run(
             host='127.0.0.1',
             port=port,
             debug=debug_mode,
-            use_reloader=True,
-            reloader_type='stat',
-            extra_files=extra_files
+            use_reloader=False  # Deaktivieren Sie den Werkzeug-Reloader
         )
     finally:
         # Stelle sicher, dass die JVM beim Beenden heruntergefahren wird
