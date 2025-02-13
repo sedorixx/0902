@@ -1,0 +1,152 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="row justify-content-center">
+    <div class="col-md-10">
+        <!-- Hero Section -->
+        <div class="card shadow-smooth fade-in mb-5">
+            <div class="card-body text-center py-5">
+                <h1 class="display-4 mb-4">PDF Tabellen Extraktor</h1>
+                <p class="lead mb-4">
+                    Extrahieren Sie einfach und schnell Tabellen aus Ihren PDF-Dokumenten. 
+                    Perfekt für die Verarbeitung von Fahrzeugdaten und technischen Dokumenten.
+                </p>
+                <div class="d-flex justify-content-center gap-3">
+                    <a href="{{ url_for('index') }}" class="btn btn-primary btn-lg hover-lift">
+                        <i class="fas fa-upload me-2"></i>PDF hochladen
+                    </a>
+                    <a href="#features" class="btn btn-outline-primary btn-lg hover-lift">
+                        <i class="fas fa-info-circle me-2"></i>Mehr erfahren
+                    </a>
+                </div>
+            </div>
+        </div>
+
+        <!-- Features Section -->
+        <section id="features" class="mb-5">
+            <h2 class="text-center mb-4">Funktionen</h2>
+            <div class="row g-4">
+                <div class="col-md-4">
+                    <div class="card shadow-smooth h-100 hover-lift">
+                        <div class="card-body text-center">
+                            <i class="fas fa-bolt fa-2x text-primary mb-3"></i>
+                            <h3>Schnell</h3>
+                            <p>Verarbeitung in Sekundenschnelle mit optimierter Leistung für große PDF-Dateien.</p>
+                        </div>
+                    </div>
+                </div>
+                <div class="col-md-4">
+                    <div class="card shadow-smooth h-100 hover-lift">
+                        <div class="card-body text-center">
+                            <i class="fas fa-table fa-2x text-primary mb-3"></i>
+                            <h3>Präzise</h3>
+                            <p>Genaue Erkennung von Tabellen mit intelligenter Struktur-Analyse.</p>
+                        </div>
+                    </div>
+                </div>
+                <div class="col-md-4">
+                    <div class="card shadow-smooth h-100 hover-lift">
+                        <div class="card-body text-center">
+                            <i class="fas fa-file-export fa-2x text-primary mb-3"></i>
+                            <h3>Export</h3>
+                            <p>Flexibler Export in verschiedene Formate wie CSV und Excel.</p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- How It Works Section -->
+        <section class="mb-5">
+            <h2 class="text-center mb-4">So funktioniert's</h2>
+            <div class="card shadow-smooth">
+                <div class="card-body">
+                    <div class="row g-4">
+                        <div class="col-md-4">
+                            <div class="text-center">
+                                <div class="circle-step mb-3">1</div>
+                                <h4>Hochladen</h4>
+                                <p>Laden Sie Ihre PDF-Datei hoch</p>
+                            </div>
+                        </div>
+                        <div class="col-md-4">
+                            <div class="text-center">
+                                <div class="circle-step mb-3">2</div>
+                                <h4>Verarbeitung</h4>
+                                <p>Automatische Erkennung der Tabellen</p>
+                            </div>
+                        </div>
+                        <div class="col-md-4">
+                            <div class="text-center">
+                                <div class="circle-step mb-3">3</div>
+                                <h4>Download</h4>
+                                <p>Exportieren Sie die Ergebnisse</p>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- FAQ Section -->
+        <section class="mb-5">
+            <h2 class="text-center mb-4">Häufig gestellte Fragen</h2>
+            <div class="accordion shadow-smooth" id="faqAccordion">
+                <div class="accordion-item">
+                    <h2 class="accordion-header">
+                        <button class="accordion-button" type="button" data-bs-toggle="collapse" data-bs-target="#faq1">
+                            Welche PDF-Dateien werden unterstützt?
+                        </button>
+                    </h2>
+                    <div id="faq1" class="accordion-collapse collapse show" data-bs-parent="#faqAccordion">
+                        <div class="accordion-body">
+                            Alle gängigen PDF-Formate werden unterstützt. Die Tabellen sollten klar strukturiert sein.
+                        </div>
+                    </div>
+                </div>
+                <div class="accordion-item">
+                    <h2 class="accordion-header">
+                        <button class="accordion-button collapsed" type="button" data-bs-toggle="collapse" data-bs-target="#faq2">
+                            Wie groß dürfen die Dateien sein?
+                        </button>
+                    </h2>
+                    <div id="faq2" class="accordion-collapse collapse" data-bs-parent="#faqAccordion">
+                        <div class="accordion-body">
+                            Die maximale Dateigröße beträgt 16 MB. Größere Dateien müssen aufgeteilt werden.
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </section>
+    </div>
+</div>
+
+<!-- Add custom styles for the homepage -->
+{% block styles %}
+<style>
+    .circle-step {
+        width: 40px;
+        height: 40px;
+        background-color: var(--primary-color);
+        color: white;
+        border-radius: 50%;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 1.2rem;
+        font-weight: bold;
+        margin: 0 auto;
+    }
+    
+    .accordion-button:not(.collapsed) {
+        background-color: rgba(13, 110, 253, 0.1);
+        color: var(--primary-color);
+    }
+    
+    .accordion-button:focus {
+        border-color: var(--primary-color);
+        box-shadow: 0 0 0 0.25rem rgba(13, 110, 253, 0.25);
+    }
+</style>
+{% endblock %}
+{% endblock %}

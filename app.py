@@ -5,6 +5,8 @@ import tempfile
 import re  # Add this import
 import jpype
 import pdfplumber  # Am Anfang der Datei bei den anderen Imports
+from flask import Flask, render_template, request, send_file, url_for, jsonify, send_from_directory, make_response
+from flask_cors import CORS
 
 required_packages = {
     'flask': 'Flask',
@@ -41,7 +43,94 @@ from flask_sqlalchemy import SQLAlchemy
 from extensions import db
 from models import AuflagenCode
 
+# Aktualisiere die CORS-Konfiguration
 app = Flask(__name__)
+CORS(app, resources={
+    r"/*": {
+        "origins": [
+            "https://musical-guacamole-jj7g69vxrx4jhprjp-5000.app.github.dev",
+            "http://127.0.0.1:5000"
+        ],
+        "methods": ["GET", "HEAD", "POST", "OPTIONS"],
+        "allow_headers": ["Content-Type", "Authorization"],
+        "supports_credentials": True
+    }
+})
+
+@app.after_request
+def add_cors_headers(response):
+    origin = request.headers.get('Origin')
+    if origin in [
+        'https://musical-guacamole-jj7g69vxrx4jhprjp-5000.app.github.dev',
+        'http://127.0.0.1:5000'
+    ]:
+        response.headers['Access-Control-Allow-Origin'] = origin
+        response.headers['Access-Control-Allow-Credentials'] = 'true'
+        response.headers['Access-Control-Allow-Methods'] = 'GET, POST, OPTIONS'
+        response.headers['Access-Control-Allow-Headers'] = 'Content-Type, Authorization'
+    return response
+
+@app.route('/static/<path:filename>')
+def serve_static(filename):
+    """Zentrale Route für alle statischen Dateien"""
+    try:
+        response = send_from_directory('static', filename)
+        
+        # Set cache headers based on file type
+        if any(filename.endswith(ext) for ext in ['.js', '.css', '.woff2', '.png', '.jpg', '.jpeg', '.gif']):
+            # Cache static assets for 1 year
+            response.headers['Cache-Control'] = 'public, max-age=31536000, immutable'
+        else:
+            # No cache for other files
+            response.headers['Cache-Control'] = 'no-cache, no-store, must-revalidate'
+            
+        # Set content type headers
+        if filename.endswith('.js'):
+            response.headers['Content-Type'] = 'application/javascript'
+        elif filename.endswith('.css'):
+            response.headers['Content-Type'] = 'text/css'
+        elif filename.endswith('.json'):
+            response.headers['Content-Type'] = 'application/json'
+            
+        return response
+    except Exception as e:
+        print(f"Fehler beim Bereitstellen von {filename}: {str(e)}")
+        return f"Datei {filename} nicht verfügbar", 404
+
+@app.route('/sw.js')
+@app.route('/static/sw.js')  # Alternative Route für Abwärtskompatibilität
+def serve_sw():
+    """Serve Service Worker with correct headers"""
+    try:
+        response = send_from_directory('static', 'sw.js')
+        response.headers.update({
+            'Content-Type': 'application/javascript',
+            'Service-Worker-Allowed': '/',
+            'Cache-Control': 'no-cache',
+        })
+        
+        origin = request.headers.get('Origin')
+        if origin:
+            response.headers['Access-Control-Allow-Origin'] = origin
+            
+        return response
+    except Exception as e:
+        print(f"Fehler beim Bereitstellen von sw.js: {str(e)}")
+        return "Service Worker nicht verfügbar", 404
+
+@app.route('/')
+@app.route('/upload', methods=['GET'])
+def index():
+    """Hauptseite und Upload-Route"""
+    if not check_java():
+        return "Fehler: Java muss installiert sein, um diese Anwendung zu nutzen.", 500
+        
+    response = make_response(render_template('index.html'))
+    response.headers['Cache-Control'] = 'no-cache, no-store, must-revalidate'
+    response.headers['Pragma'] = 'no-cache'
+    response.headers['Expires'] = '0'
+    return response
+
 app.config['UPLOAD_FOLDER'] = tempfile.mkdtemp()
 print(f"Temporäres Verzeichnis erstellt: {app.config['UPLOAD_FOLDER']}")
 app.config['MAX_CONTENT_LENGTH'] = 16 * 1024 * 1024  # 16MB max-limit
@@ -184,51 +273,34 @@ def initialize_jvm():
         return False
 
 def process_pdf_with_encoding(filepath, output_format):
-    """Verarbeitet PDF mit verbesserter Tabellenerkennung und extrahiert alle Tabellen"""
+    """Verarbeitet PDF mit verbesserter Tabellenerkennung"""
     try:
         all_tables = []
-        
-        # Erste Erkennung mit angepassten Parametern für Fahrzeugtabellen
         tables_lattice = tabula.read_pdf(
             filepath,
             pages='all',
             multiple_tables=True,
             lattice=True,
-            guess=True,
+            guess=False,
+            stream=False,
             silent=True,
             encoding='utf-8',
-            pandas_options={'header': 0}  # Erste Zeile als Header
+            pandas_options={'header': None, 'dtype': str}
         )
         
-        # Zweite Erkennung: Stream-Modus für Tabellen ohne Linien
-        tables_stream = tabula.read_pdf(
-            filepath,
-            pages='all',
-            multiple_tables=True,
-            lattice=False,
-            stream=True,
-            guess=True,
-            silent=True,
-            encoding='utf-8'
-        )
-        
-        # Kombiniere alle Erkennungsmethoden
-        all_detected_tables = tables_lattice + tables_stream
-        
-        # Verarbeite die gefundenen Tabellen
-        for table in all_detected_tables:
+        for table in tables_lattice:
             if isinstance(table, pd.DataFrame) and len(table) > 0:
-                # Grundlegende Bereinigung
-                table = table.dropna(how='all')
-                table = table.dropna(how='all', axis=1)
+                # Bereinige die Tabelle
                 table = table.fillna('')
+                table = table.loc[:, ~table.apply(lambda x: x.str.strip().eq('').all())]
+                table = table.loc[~table.apply(lambda x: x.str.strip().eq('').all(), axis=1)]
                 
-                # Konvertiere zu String für einheitliche Verarbeitung
-                table = table.astype(str)
-                
-                if not table.empty and is_valid_table(table):
+                if len(table) > 0:
+                    # Versuche Kopfzeile zu identifizieren
+                    if table.columns.dtype == 'int64':
+                        table.columns = table.iloc[0]
+                        table = table.iloc[1:]
                     all_tables.append(table)
-                    print(f"Gültige Tabelle gefunden mit {len(table)} Zeilen und {len(table.columns)} Spalten")
 
         return all_tables
 
@@ -236,21 +308,63 @@ def process_pdf_with_encoding(filepath, output_format):
         print(f"Fehler bei der Tabellenextraktion: {str(e)}")
         return []
 
-@app.route('/', methods=['GET'])
-def index():
-    if not check_java():
-        return "Fehler: Java muss installiert sein, um diese Anwendung zu nutzen.", 500
-    return render_template('index.html')
+def create_condition_code_link(match):
+    """Creates HTML for condition code with tooltip"""
+    code = match.group(0)
+    description = AUFLAGEN_TEXTE.get(code, "Keine Beschreibung verfügbar")
+    return f'<span class="condition-code" data-code="{code}" data-description="{description}">{code}</span>'
+
+@app.template_filter('replace_condition_codes')
+def replace_condition_codes(html):
+    """Template filter to replace condition codes with linked versions"""
+    import re
+    # Pattern für Auflagen-Codes
+    pattern = r'(?:(?:[A-Z][0-9]{1,3}[a-z]?)|(?:[0-9]{2,3}[A-Z]?)|(?:NoH|Lim))'
+    return re.sub(pattern, create_condition_code_link, html)
 
 def convert_table_to_html(df):
-    """Konvertiert DataFrame in formatiertes HTML"""
-    return df.to_html(
-        classes='table table-striped table-hover',
+    """Konvertiert DataFrame zu HTML mit Tooltips für Auflagencodes"""
+    # Füge Tooltips zu Auflagencodes hinzu
+    def add_tooltips_to_codes(text):
+        if pd.isna(text):
+            return ''
+        text = str(text)
+        # Pattern für Auflagen-Codes
+        pattern = r'([A-Z][0-9]{1,3}[a-z]?|[0-9]{2,3}[A-Z]?|NoH|Lim)'
+        
+        def replace_with_tooltip(match):
+            code = match.group(1)
+            description = AUFLAGEN_TEXTE.get(code, "Keine Beschreibung verfügbar")
+            return f'<span class="auflage-code" data-bs-toggle="tooltip" data-bs-title="{description}">{code}</span>'
+        
+        return re.sub(pattern, replace_with_tooltip, text)
+
+    # Identifiziere Auflagen-Spalten
+    auflagen_columns = [col for col in df.columns 
+                       if any(x in str(col).lower() for x in ['auflagen', 'hinweise'])]
+    
+    # Konvertiere Auflagen-Spalten
+    df_copy = df.copy()
+    for col in auflagen_columns:
+        df_copy[col] = df_copy[col].apply(add_tooltips_to_codes)
+
+    # Konvertiere zu HTML
+    html = df_copy.to_html(
         index=False,
-        border=0,
+        header=True,
+        classes='table table-striped table-bordered pdf-table',
         escape=False,
-        na_rep=''
+        na_rep='',
+        justify='left',
+        border=1,
+        table_id='dataTable'
     )
+    
+    # Entferne zusätzliche Formatierungen
+    html = html.replace('style="text-align: left;"', '')
+    html = html.replace('\n', ' ')
+    
+    return html
 
 # Füge temporären Storage-Handler hinzu
 class TemporaryStorage:
@@ -332,18 +446,16 @@ AUFLAGEN_TEXTE = {
 def extract_auflagen_with_text(pdf_path):
     """Extrahiert Auflagen-Codes und deren zugehörige Texte aus der PDF"""
     codes_with_text = {}
-    excluded_texts = [
-        "Technologiezentrum Typprüfstelle Lambsheim - Königsberger Straße 20d - D-67245 Lambsheim",
-    ]
-    collect_text = True  # Flag für die Textsammlung
-    current_section = ""  # Buffer für den aktuellen Textabschnitt
-
+    current_code = None
+    current_text = []
+    extraction_finished = False
+    
     try:
-        with app.app_context():
-            db_codes = {code.code: code.description for code in AuflagenCode.query.all()}
-        
         with pdfplumber.open(pdf_path) as pdf:
             for page in pdf.pages:
+                if extraction_finished:
+                    break
+                    
                 text = page.extract_text()
                 if not text:
                     continue
@@ -352,172 +464,178 @@ def extract_auflagen_with_text(pdf_path):
                 for line in lines:
                     line = line.strip()
                     
-                    # Prüfe auf Ende der Auflagen
+                    # Beende sofort wenn "Prüfort und Prüfdatum" gefunden wird
                     if "Prüfort und Prüfdatum" in line:
-                        print("Extraktion beendet - 'Prüfort und Prüfdatum' gefunden")
-                        # Speichere letzten Abschnitt vor dem Beenden
-                        if current_section:
-                            code_match = re.match(r'^([A-Z][0-9]{1,3}[a-z]?|[0-9]{2,3})[\s\.:)](.+)', current_section)
-                            if code_match:
-                                code = code_match.group(1).strip()
-                                description = code_match.group(2).strip()
-                                if code in db_codes:
-                                    codes_with_text[code] = description
-                                    print(f"Letzter Code gespeichert: {code}")
-                        return codes_with_text  # Beende die Funktion sofort
+                        if current_code and current_text:
+                            codes_with_text[current_code] = ' '.join(current_text).strip()
+                            print(f"Letzter Code gespeichert: {current_code}")
+                        extraction_finished = True
+                        break
                     
-                    # Prüfe auf "Technologiezentrum"
-                    if "Technologiezentrum" in line:
-                        print("Technologie gefunden - Pausiere Extraktion")
-                        collect_text = False
-                        current_section = ""  # Verwerfe aktuellen Abschnitt
+                    # Überspringe irrelevante Zeilen
+                    if not line or any(x in line for x in [
+                        "Technologiezentrum", 
+                        "Prüfstelle", 
+                        "Königsberger",
+                        "Tel.:",
+                        "Fax:"
+                    ]):
                         continue
 
-                    # Prüfe auf neuen Auflagen-Code
-                    if re.match(r'^([A-Z][0-9]{1,3}[a-z]?|[0-9]{2,3})[\s\.:)]', line):
-                        print(f"Neuer Code gefunden: {line[:20]}...")
+                    # Pattern für Auflagen-Code mit Beschreibung
+                    code_match = re.match(
+                        r'^([A-Z][0-9]{1,3}[a-z]?|[0-9]{2,3}[A-Z]?|[XY][0-9]{2}|[A-Z]{1,2}[0-9]{2}[a-z]?)\s*[:.-]?\s*(.+)', 
+                        line
+                    )
+                    
+                    if code_match:
+                        # Speichere vorherigen Code
+                        if current_code and current_text:
+                            codes_with_text[current_code] = ' '.join(current_text).strip()
+                            print(f"Gespeicherter Code {current_code}: {codes_with_text[current_code][:100]}")
                         
-                        # Speichere vorherigen Abschnitt wenn vorhanden
-                        if collect_text and current_section:
-                            code_match = re.match(r'^([A-Z][0-9]{1,3}[a-z]?|[0-9]{2,3})[\s\.:)](.+)', current_section)
-                            if code_match:
-                                code = code_match.group(1).strip()
-                                description = code_match.group(2).strip()
-                                if code in db_codes:
-                                    codes_with_text[code] = description
-                                    print(f"Gespeichert: {code}")
-                        
-                        collect_text = True  # Setze Extraktion fort
-                        current_section = line  # Starte neuen Abschnitt
-                        continue
+                        # Starte neuen Code
+                        current_code = code_match.group(1)
+                        current_text = [code_match.group(2)]
+                        print(f"Neuer Code gefunden: {current_code}")
+                    elif current_code:
+                        # Füge Folgezeilen zur aktuellen Beschreibung hinzu
+                        current_text.append(line)
 
-                    # Sammle Text wenn aktiv
-                    if collect_text and current_section:
-                        current_section += " " + line
+        # Bereinige die Texte
+        for code, text in codes_with_text.items():
+            # Entferne mehrfache Leerzeichen und Zeilenumbrüche
+            text = re.sub(r'\s+', ' ', text)
+            # Entferne Sonderzeichen am Anfang und Ende
+            text = re.sub(r'^[^a-zA-Z0-9äöüÄÖÜß]+', '', text)
+            text = re.sub(r'[^a-zA-Z0-9äöüÄÖÜß.]+$', '', text)
+            codes_with_text[code] = text.strip()
 
     except Exception as e:
         print(f"Fehler beim Extrahieren der Auflagen-Texte: {str(e)}")
         import traceback
         print(traceback.format_exc())
     
-    # Bereinige die gesammelten Texte
-    for code, text in codes_with_text.items():
-        text = re.sub(r'\s+', ' ', text)  # Entferne mehrfache Leerzeichen
-        text = text.strip()
-        codes_with_text[code] = text
-        print(f"Finaler Code {code}: {text[:100]}...")
-
+    print(f"\nGefundene Auflagen-Texte: {len(codes_with_text)}")
     return codes_with_text
 
-def save_to_database(codes_with_text):
-    """Speichert oder aktualisiert Auflagen-Codes und Texte in der Datenbank"""
-    try:
-        with app.app_context():
-            for code, description in codes_with_text.items():
-                # Prüfe, ob der Code bereits existiert
-                existing_code = AuflagenCode.query.filter_by(code=code).first()
-                
-                if existing_code:
-                    # Aktualisiere nur, wenn der Text sich geändert hat
-                    if existing_code.description != description:
-                        existing_code.description = description
-                        print(f"Aktualisiere Code {code} in der Datenbank")
-                else:
-                    # Füge neuen Code hinzu
-                    new_code = AuflagenCode(code=code, description=description)
-                    db.session.add(new_code)
-                    print(f"Füge neuen Code {code} zur Datenbank hinzu")
-            
-            db.session.commit()
-            print("Datenbank erfolgreich aktualisiert")
-            
-    except Exception as e:
-        print(f"Fehler beim Speichern in der Datenbank: {str(e)}")
-        db.session.rollback()
-
 def extract_auflagen_codes(tables):
+    """Extrahiert und speichert Auflagencodes"""
     codes = set()
+    codes_in_tables = {}  # Speichert Codes und deren Kontext aus den Tabellen
+    
     code_pattern = re.compile(r"""
         (?:
-            [A-Z][0-9]{1,3}[a-z]?|    # Bsp: A01, B123a
-            [0-9]{2,3}[A-Z]?|          # Bsp: 155, 12A
-            NoH|Lim                     # Spezielle Codes
+            # Standardcodes wie A01, B123a, T99, etc.
+            [A-Z][0-9]{1,3}[a-z]?|
+            # Numerische Codes wie 155, 12A
+            [0-9]{2,3}[A-Z]?|
+            # Spezielle zweibuchstabige Codes wie Kg, KG
+            K[a-z1-9]|
+            # Spezielle Codes mit Buchstaben und Zahlen
+            [A-Z][0-9][a-z0-9]|
+            # Codes mit Buchstaben am Ende wie 123a
+            [0-9]{2,3}[a-z]|
+            # Spezielle Wörter
+            NoH|Lim|
+            # Codes wie V00, V19, etc.
+            V[0-9]{2}|
+            # Codes wie X77, Y16, Y18, Y63, Y85
+            [XY][0-9]{2}|
+            # S-Codes wie S01, S02, etc.
+            S[0-9]{2}|
+            # K-Codes wie K14, K1a, K1b, etc.
+            K[0-9][a-z0-9]|
+            # Spezielle K-Codes wie K41, K42, etc.
+            K[0-9]{2}|
+            # T-Codes wie T84-T99
+            T[0-8][0-9]|T9[0-9]|
+            # R-Codes wie R21, R35
+            R[0-9]{2}|
+            # G-Codes wie G01, G03
+            G[0-9]{2}|
+            # B-Codes wie B03, B90
+            B[0-9]{2}|
+            # F-Codes wie F24, F38, F39
+            F[0-9]{2}
         )
+        (?=[^a-zA-Z0-9]|$)  # Verhindert teilweise Matches in längeren Wörtern
     """, re.VERBOSE)
-    
-    # Explizit erlaubte Spalten
-    allowed_columns = {
-        'reifenbezogene auflagen und hinweise',
-        'auflagen und hinweise',
-        'auflagen'
-    }
 
-    # Explizit ausgeschlossene Spalten
-    excluded_columns = {
-        'handelsbezeichnung',
-        'fahrzeug-typ',
-        'abe/ewg-nr',
-        'fahrzeugtyp',
-        'typ',
-        'abe',
-        'ewg-nr'
-    }
-
+    # Erst alle Codes aus den Tabellen extrahieren und Kontext speichern
     for table in tables:
-        # Konvertiere alle Werte zu Strings und normalisiere Spaltennamen
-        table_str = table.astype(str)
-        
-        # Normalisiere Spaltennamen (zu Kleinbuchstaben und ohne Sonderzeichen)
         normalized_columns = {
-            col: col.strip().lower().replace('/', '').replace('-', '').replace(' ', '')
-            for col in table_str.columns
+            str(col).strip().lower(): col 
+            for col in table.columns
         }
-
-        for original_col, normalized_col in normalized_columns.items():
-            # Überspringe explizit ausgeschlossene Spalten
-            if any(excl in normalized_col for excl in excluded_columns):
-                continue
-                
-            # Prüfe nur erlaubte Spalten
-            if any(allowed in normalized_col for allowed in allowed_columns):
-                for value in table_str[original_col]:
-                    matches = code_pattern.findall(str(value))
-                    codes.update(matches)
-    
-    # Extrahiere auch die Auflagen-Texte aus der PDF
-    pdf_path = os.path.join(app.config['UPLOAD_FOLDER'], request.files['file'].filename)
-    extracted_texts = extract_auflagen_with_text(pdf_path)
-    print(f"Gefundene Auflagen-Texte: {len(extracted_texts)}")  # Debug-Ausgabe
-    for code, text in extracted_texts.items():
-        print(f"Code {code}: {text[:100]}...")  # Debug-Ausgabe
-    
-    # Modifizierte Logik für das Speichern der Codes mit Texten
-    with app.app_context():
-        existing_codes = set(code.code for code in AuflagenCode.query.all())
-        new_codes = codes - existing_codes
         
-        for code in new_codes:
-            description = extracted_texts.get(code)  # Versuche zuerst den extrahierten Text
-            if not description:  # Falls nicht gefunden, verwende Standard-Text
-                description = AUFLAGEN_TEXTE.get(code, "Keine Beschreibung verfügbar")
-            
-            new_code = AuflagenCode(
-                code=code,
-                description=description
-            )
-            db.session.add(new_code)
-        db.session.commit()
+        relevant_columns = []
+        for norm_name, original_name in normalized_columns.items():
+            if ('reifenbezogene' in norm_name and 'auflagen' in norm_name) or \
+               ('auflagen' in norm_name and 'hinweise' in norm_name):
+                relevant_columns.append(original_name)
+                print(f"Gefundene relevante Spalte: {original_name}")
 
-    # Kombiniere gefundene Codes mit ihren Texten
-    codes_with_text = {}
-    for code in codes:
-        description = extracted_texts.get(code, AUFLAGEN_TEXTE.get(code, "Keine Beschreibung verfügbar"))
-        codes_with_text[code] = description
-    
-    # Speichere in der Datenbank
-    save_to_database(codes_with_text)
-    
-    return sorted(list(codes))
+        if not relevant_columns:
+            continue
+
+        for col in relevant_columns:
+            values = table[col].astype(str)
+            for value in values:
+                # Teile den Text an Kommas und anderen Trennzeichen
+                parts = re.split(r'[,;/\s]+', value)
+                for part in parts:
+                    matches = code_pattern.findall(part.strip())
+                    if matches:
+                        for code in matches:
+                            codes.add(code)
+                            # Speichere den originalen Kontext
+                            if code not in codes_in_tables:
+                                codes_in_tables[code] = value.strip()
+                        print(f"Gefundene Codes in '{value}': {matches}")
+
+    try:
+        # Hole die Beschreibungen aus der PDF
+        pdf_path = os.path.join(app.config['UPLOAD_FOLDER'], request.files['file'].filename)
+        extracted_texts = extract_auflagen_with_text(pdf_path)
+        
+        with app.app_context():
+            existing_codes = {code.code: code for code in AuflagenCode.query.all()}
+            code_objects = []
+            
+            for code in codes:
+                # Priorität der Beschreibungen:
+                # 1. Aus der PDF extrahierter Text
+                # 2. Standard-Text aus AUFLAGEN_TEXTE
+                # 3. Kontext aus der Tabelle
+                # 4. Fallback-Text
+                if code in extracted_texts:
+                    description = extracted_texts[code]
+                elif code in AUFLAGEN_TEXTE:
+                    description = AUFLAGEN_TEXTE[code]
+                elif code in codes_in_tables:
+                    description = f"Aus Tabelle: {codes_in_tables[code]}"
+                else:
+                    description = "Keine Beschreibung verfügbar"
+
+                if code in existing_codes:
+                    existing_codes[code].description = description
+                    code_objects.append(existing_codes[code])
+                else:
+                    new_code = AuflagenCode(code=code, description=description)
+                    db.session.add(new_code)
+                    code_objects.append(new_code)
+            
+            db.session.commit()
+            print(f"Erfolgreich {len(code_objects)} Codes gespeichert")
+            
+            # Hole aktualisierte Codes
+            return AuflagenCode.query.filter(AuflagenCode.code.in_(codes)).all()
+
+    except Exception as e:
+        print(f"Fehler beim Speichern in der DB: {str(e)}")
+        db.session.rollback()
+        return []
 
 @app.route('/extract', methods=['POST'])
 def extract():
@@ -549,10 +667,20 @@ def extract():
         
         for i, table in enumerate(tables):
             table = table.fillna('')
-            table = table.astype(str)
             
-            # Generiere HTML-Vorschau
-            table_htmls.append(convert_table_to_html(table))
+            # Verbesserte Tabellenverarbeitung
+            if isinstance(table, pd.DataFrame):
+                # Konvertiere erste Zeile zu Spaltenüberschriften wenn keine vorhanden
+                if table.columns.dtype == 'int64':
+                    table.columns = table.iloc[0]
+                    table = table.iloc[1:]
+                
+                # Bereinige die Tabelle
+                table = clean_table_data(table)
+                
+                # Generiere HTML
+                table_html = convert_table_to_html(table)
+                table_htmls.append(table_html)
             
             # Verwende PDF-ID im Dateinamen
             output_filename = f"{pdf_id}_table_{i+1}.{output_format}"
@@ -571,36 +699,22 @@ def extract():
             temp_storage.add_file(output_filename)  # Markiere Tabelle als aktiv
             results.append(output_filename)
         
-        # Extrahiere Auflagen-Codes und deren Texte
-        auflagen_codes = extract_auflagen_codes(tables)
-        extracted_texts = extract_auflagen_with_text(pdf_path)
+        # Extrahiere und speichere Auflagencodes
+        condition_codes = extract_auflagen_codes(tables)
+        print(f"Gefundene Auflagencodes: {len(condition_codes)}")
         
-        # Erstelle Liste von AuflagenCode-Objekten mit den extrahierten Texten
-        condition_codes = [
-            AuflagenCode(
-                code=code, 
-                description=extracted_texts.get(code, AUFLAGEN_TEXTE.get(code, "Keine Beschreibung verfügbar"))
-            )
-            for code in auflagen_codes
-        ]
-        
-        if not results:
-            return "Keine Tabellen in der PDF-Datei gefunden.", 400
+        # Verwende die Attribute innerhalb der Route-Funktion
+        for code in condition_codes:
+            with app.app_context():
+                print(f"Code: {code.code}, Beschreibung: {code.description[:50]}...")
             
-        # Automatische Bereinigung nach 1 Stunde
-        def delayed_cleanup():
-            import time
-            time.sleep(3600)  # 1 Stunde warten
-            for filename in results + [filename]:
-                temp_storage.remove_file(filename)
-        
-        threading.Thread(target=delayed_cleanup).start()
-        
-        return render_template('results.html', 
-                            files=results, 
-                            tables=table_htmls,
-                            condition_codes=condition_codes,
-                            pdf_file=filename)
+        return render_template(
+            'results.html',
+            files=results,
+            tables=table_htmls,
+            condition_codes=condition_codes,  # Übergebe die Code-Objekte
+            pdf_file=filename
+        )
         
     except Exception as e:
         import traceback
@@ -612,6 +726,27 @@ def extract():
             f"Details: {str(e)}\n{error_details}"
         )
         return error_msg, 500
+
+def clean_table_data(df):
+    """Bereinigt Tabellendaten und markiert Auflagen-Codes"""
+    df = df.astype(str)  # Konvertiere alle Daten zu Strings
+    
+    # Konvertiere Spaltennamen zu Strings
+    df.columns = df.columns.astype(str)
+    
+    # Identifiziere Spalten mit Auflagen
+    auflagen_columns = [col for col in df.columns 
+                       if any(x in str(col).lower() for x in ['auflagen', 'hinweise'])]
+    
+    # Bereinige die Auflagen-Spalten
+    for col in auflagen_columns:
+        if col in df.columns:
+            # Standardisiere Trennzeichen
+            df[col] = df[col].str.replace(';', ',').str.replace('/', ',')
+            # Entferne überflüssige Leerzeichen
+            df[col] = df[col].str.strip()
+    
+    return df
 
 @app.route('/download/<filename>')
 def download_file(filename):
@@ -834,14 +969,33 @@ def cleanup_temp_files():
     """Bereinigt alle inaktiven temporären Dateien"""
     temp_storage.cleanup_inactive()
 
+@app.route('/condition_codes', methods=['GET'])
+def get_condition_codes():
+    """Zeigt alle verfügbaren Auflagencodes an"""
+    try:
+        codes = AuflagenCode.query.all()
+        return render_template('condition_codes.html', condition_codes=codes)
+    except Exception as e:
+        print(f"Fehler beim Abrufen der Auflagencodes: {str(e)}")
+        return "Fehler beim Laden der Auflagencodes", 500
+
 def init_db():
     with app.app_context():
         db.create_all()
 
+def init_app():
+    """Initialisiert die Anwendung"""
+    try:
+        from utils.create_icon import create_icon
+        create_icon()
+    except Exception as e:
+        print(f"Warnung: Konnte Icon nicht erstellen: {e}")
+    init_db()
+
 if __name__ == '__main__':
     try:
-        # Initialize database
-        init_db()
+        # Initialize app
+        init_app()
         
         # Verbesserte Entwicklungsumgebung-Konfiguration
         debug_mode = os.environ.get('FLASK_DEBUG', 'True').lower() == 'true'
@@ -872,4 +1026,3 @@ if __name__ == '__main__':
     finally:
         # Stelle sicher, dass die JVM beim Beenden heruntergefahren wird
         shutdown_jvm()
-

@@ -121,16 +121,23 @@
         <div class="tab-pane fade" id="codes" role="tabpanel">
             {% if condition_codes %}
             <div class="card-body">
+                <div class="alert alert-info mb-3">
+                    <i class="fas fa-info-circle me-2"></i>
+                    <strong>{{ condition_codes|length }}</strong> Auflagencodes gefunden
+                </div>
+                
                 <div class="row">
-                    <div class="col-md-6">
+                    <!-- Kompakte Code-Ansicht -->
+                    <div class="col-md-6 mb-3">
                         <div class="card">
                             <div class="card-header">
-                                <h5><i class="fas fa-tags me-2"></i>Auflagen Codes</h5>
+                                <h5><i class="fas fa-tags me-2"></i>Codes</h5>
                             </div>
                             <div class="card-body">
                                 <div class="d-flex flex-wrap gap-2">
                                     {% for code in condition_codes %}
-                                    <span class="badge bg-primary" data-bs-toggle="tooltip" 
+                                    <span class="badge bg-primary" 
+                                          data-bs-toggle="tooltip" 
                                           title="{{ code.description }}">
                                         {{ code.code }}
                                     </span>
@@ -139,10 +146,12 @@
                             </div>
                         </div>
                     </div>
+                    
+                    <!-- Detaillierte Code-Ansicht -->
                     <div class="col-md-6">
                         <div class="card">
                             <div class="card-header">
-                                <h5><i class="fas fa-info-circle me-2"></i>Auflagen Details</h5>
+                                <h5><i class="fas fa-info-circle me-2"></i>Details</h5>
                             </div>
                             <div class="card-body">
                                 <div class="list-group">
@@ -159,14 +168,33 @@
                 </div>
             </div>
             {% else %}
-            <div class="alert alert-info m-3">
-                <i class="fas fa-info-circle me-2"></i>Keine Auflagencodes gefunden
+            <div class="card-body">
+                <div class="alert alert-info">
+                    <i class="fas fa-info-circle me-2"></i>Keine Auflagencodes gefunden
+                </div>
             </div>
             {% endif %}
         </div>
     </div>
 </div>
-{% endblock %}
+
+<div class="card mb-4">
+    <div class="card-header">
+        <h2 class="card-title">Extrahierte Tabellen</h2>
+    </div>
+    <div class="card-body">
+        {% if condition_codes %}
+        <div class="alert alert-info">
+            <i class="fas fa-info-circle me-2"></i>
+            <strong>{{ condition_codes|length }}</strong> Auflagencodes gefunden.
+            <a href="{{ url_for('get_condition_codes') }}" class="alert-link ms-2">
+                Alle Auflagencodes anzeigen
+            </a>
+        </div>
+        {% endif %}
+    </div>
+</div>
+{% endblock content %}
 
 {% block scripts %}
 <script>
@@ -373,9 +401,83 @@ $(document).ready(function() {
             destroy: true
         });
     });
+
+    // Initialize tooltips for condition codes
+    function initConditionTooltips() {
+        const tooltipTriggerList = [].slice.call(document.querySelectorAll('[data-bs-toggle="tooltip"]'));
+        tooltipTriggerList.map(function (tooltipTriggerEl) {
+            return new bootstrap.Tooltip(tooltipTriggerEl);
+        });
+    }
+    
+    // Initialize tooltips when switching to codes tab
+    $('a[data-bs-toggle="tab"]').on('shown.bs.tab', function (e) {
+        if ($(e.target).attr('href') === '#codes') {
+            initConditionTooltips();
+        }
+    });
+    
+    // Initialize tooltips on page load if codes tab is active
+    if ($('#codes').hasClass('active')) {
+        initConditionTooltips();
+    }
 });
+
+function initializeConditionTooltips() {
+    // Find all condition code spans
+    document.querySelectorAll('.condition-code').forEach(element => {
+        const code = element.getAttribute('data-code');
+        const description = element.getAttribute('data-description');
+        
+        // Initialize Bootstrap tooltip
+        new bootstrap.Tooltip(element, {
+            title: description,
+            placement: 'top',
+            html: true,
+            template: `
+                <div class="tooltip condition-tooltip" role="tooltip">
+                    <div class="tooltip-arrow"></div>
+                    <div class="tooltip-inner"></div>
+                </div>
+            `
+        });
+    });
+}
+
+document.addEventListener('DOMContentLoaded', initializeConditionTooltips);
 </script>
 
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+    // Initialisiere Tooltips für alle Auflagen-Codes
+    var tooltipTriggerList = [].slice.call(document.querySelectorAll('[data-bs-toggle="tooltip"]'));
+    var tooltipList = tooltipTriggerList.map(function (tooltipTriggerEl) {
+        return new bootstrap.Tooltip(tooltipTriggerEl, {
+            placement: 'top',
+            html: true,
+            boundary: 'window'
+        });
+    });
+    
+    // Tooltip-Neuinitialisierung nach AJAX-Updates
+    function initTooltips() {
+        var newTooltips = document.querySelectorAll('[data-bs-toggle="tooltip"]');
+        newTooltips.forEach(function(element) {
+            new bootstrap.Tooltip(element, {
+                placement: 'top',
+                html: true,
+                boundary: 'window'
+            });
+        });
+    }
+    
+    // Event-Listener für dynamisch geladene Inhalte
+    document.addEventListener('table-updated', initTooltips);
+});
+</script>
+{% endblock scripts %}
+
+{% block styles %}
 <style>
 /* Verbesserte Styles für Suchergebnisse */
 .search-results-header {
@@ -414,5 +516,82 @@ $(document).ready(function() {
         border: 1px solid #dee2e6 !important;
     }
 }
+
+.condition-code {
+    color: #0d6efd;
+    cursor: help;
+    text-decoration: underline dotted;
+}
+.condition-tooltip .tooltip-inner {
+    max-width: 300px;
+    padding: 10px;
+    background-color: #fff;
+    color: #000;
+    border: 1px solid #ddd;
+    box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+}
+
+.pdf-view {
+    background-color: #fff;
+    padding: 20px;
+    box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+    border-radius: 4px;
+}
+
+.pdf-view .pdf-table {
+    margin: 0;
+    background-color: white;
+}
+
+/* Verbesserte Druckdarstellung */
+@media print {
+    .pdf-view {
+        padding: 0;
+        box-shadow: none;
+    }
+    
+    .pdf-table th, .pdf-table td {
+        border: 1px solid #000 !important;
+        padding: 4px 8px !important;
+    }
+}
+
+.table-container {
+    margin: 0;
+    padding: 15px;
+    background: white;
+}
+
+.pdf-table {
+    width: 100%;
+    border-collapse: collapse;
+    margin-bottom: 0;
+    font-size: 14px;
+}
+
+.pdf-table th {
+    background-color: #f8f9fa;
+    border: 1px solid #dee2e6;
+    padding: 8px;
+    font-weight: bold;
+}
+
+.pdf-table td {
+    border: 1px solid #dee2e6;
+    padding: 8px;
+    vertical-align: top;
+}
+
+/* Verbesserte Druckdarstellung */
+@media print {
+    .pdf-table th, .pdf-table td {
+        border: 1px solid #000 !important;
+    }
+    
+    .pdf-table {
+        border-collapse: collapse !important;
+        width: 100% !important;
+    }
+}
 </style>
-{% endblock %}
+{% endblock styles %}

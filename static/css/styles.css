@@ -1,0 +1,28 @@
+/* Styling für Auflagen-Codes */
+.auflage-code {
+    color: #0d6efd;
+    font-weight: bold;
+    cursor: help;
+    padding: 2px 4px;
+    border-radius: 3px;
+    background-color: rgba(13, 110, 253, 0.1);
+    transition: background-color 0.2s;
+}
+
+.auflage-code:hover {
+    background-color: rgba(13, 110, 253, 0.2);
+}
+
+/* Tooltip-Styling */
+.tooltip {
+    font-size: 14px;
+    max-width: 300px;
+}
+
+.tooltip-inner {
+    background-color: #333;
+    color: #fff;
+    padding: 8px 12px;
+    text-align: left;
+    box-shadow: 0 2px 4px rgba(0,0,0,0.2);
+}
