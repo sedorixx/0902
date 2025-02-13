@@ -8,6 +8,26 @@ import pdfplumber  # Am Anfang der Datei bei den anderen Imports
 from flask import Flask, render_template, request, send_file, url_for, jsonify, send_from_directory, make_response
 from flask_cors import CORS
 
+def install_package(package):
+    """Installiert ein Python-Paket über pip"""
+    try:
+        subprocess.check_call([sys.executable, "-m", "pip", "install", package])
+        print(f"Paket {package} erfolgreich installiert")
+        return True
+    except subprocess.CalledProcessError as e:
+        print(f"Fehler bei der Installation von {package}: {e}")
+        return False
+
+# Stelle sicher, dass pdfplumber installiert ist
+try:
+    import pdfplumber
+except ImportError:
+    if install_package('pdfplumber'):
+        import pdfplumber
+    else:
+        print("Fehler: Konnte pdfplumber nicht installieren")
+        sys.exit(1)
+
 required_packages = {
     'flask': 'Flask',
     'pandas': 'pandas',
@@ -167,7 +187,11 @@ def check_java():
         import subprocess
         subprocess.check_output(['java', '-version'], stderr=subprocess.STDOUT)
         return True
-    except:
+    except subprocess.CalledProcessError as e:
+        print(f"Fehler bei der Überprüfung der Java-Installation: {e.output.decode()}")
+        return False
+    except FileNotFoundError:
+        print("Java ist nicht installiert oder der 'java' Befehl ist nicht im PATH.")
         return False
 
 def is_valid_table(df):
@@ -257,20 +281,17 @@ def clean_vehicle_data(df):
         return df
 
 def initialize_jvm():
-    """Initialisiert die JVM mit Fallback-Mechanismus"""
+    """Initialisiert die JVM mit Fehlerbehandlung"""
     try:
         if not jpype.isJVMStarted():
-            jpype.getDefaultJVMPath()  # Prüfe zuerst den JVM-Pfad
-            jpype.startJVM(
-                jpype.getDefaultJVMPath(),
-                "-Djava.class.path=/usr/share/java/tabula-java.jar",
-                convertStrings=False,
-                interrupt=True
-            )
-            return True
+            jvm_path = jpype.getDefaultJVMPath()
+            if not os.path.exists(jvm_path):
+                raise FileNotFoundError(f"JVM shared library file not found: {jvm_path}")
+            jpype.startJVM(jvm_path, convertStrings=False)  # Verhindert automatische String-Konvertierung
     except Exception as e:
         print(f"JVM Initialisierungsfehler: {str(e)}")
-        return False
+        print("Verwende Fallback-Methode...")
+        # Hier könnte eine alternative Implementierung erfolgen
 
 def process_pdf_with_encoding(filepath, output_format):
     """Verarbeitet PDF mit verbesserter Tabellenerkennung"""
@@ -934,7 +955,10 @@ def initialize_jvm():
     """Initialisiert die JVM mit Fehlerbehandlung"""
     try:
         if not jpype.isJVMStarted():
-            jpype.startJVM(convertStrings=False)  # Verhindert automatische String-Konvertierung
+            jvm_path = jpype.getDefaultJVMPath()
+            if not os.path.exists(jvm_path):
+                raise FileNotFoundError(f"JVM shared library file not found: {jvm_path}")
+            jpype.startJVM(jvm_path, convertStrings=False)  # Verhindert automatische String-Konvertierung
     except Exception as e:
         print(f"JVM Initialisierungsfehler: {str(e)}")
         print("Verwende Fallback-Methode...")
@@ -985,44 +1009,47 @@ def init_db():
 
 def init_app():
     """Initialisiert die Anwendung"""
-    try:
-        from utils.create_icon import create_icon
-        create_icon()
-    except Exception as e:
-        print(f"Warnung: Konnte Icon nicht erstellen: {e}")
     init_db()
+    initialize_jvm()
+    cleanup_temp_files()
+    atexit.register(cleanup_on_shutdown)
 
-if __name__ == '__main__':
+def cleanup_on_shutdown():
+    """Führt sauberes Herunterfahren durch"""
     try:
-        # Initialize app
-        init_app()
+        # Beende alle aktiven Threads
+        for thread in threading.enumerate():
+            if thread is not threading.current_thread():
+                try:
+                    thread.join(timeout=1.0)
+                except Exception as e:
+                    print(f"Fehler beim Beenden des Threads {thread.name}: {e}")
         
-        # Verbesserte Entwicklungsumgebung-Konfiguration
-        debug_mode = os.environ.get('FLASK_DEBUG', 'True').lower() == 'true'
-        port = int(os.environ.get('FLASK_PORT', 5000))
-        
-        # Bereite die Liste der zu überwachenden Dateien vor
-        extra_files = []
-        if os.path.exists('./templates'):
-            extra_files.extend([os.path.join('./templates', f) for f in os.listdir('./templates')])
-        if os.path.exists('./static'):
-            extra_files.extend([os.path.join('./static', f) for f in os.listdir('./static')])
-        
-        # Initialisiere JVM vor dem Start des Servers
-            extra_files.extend([os.path.join('./static', f) for f in os.listdir('./static')])
-        initialize_jvm()
-        
-        # Stelle sicher, dass der temporäre Ordner existiert und leer ist
+        # Bereinige Dateien
         cleanup_temp_files()
         
+        # Fahre JVM herunter
+        shutdown_jvm()
+        
+    except Exception as e:
+        print(f"Fehler beim Herunterfahren: {e}")
+
+if __name__ == '__main__':
+    port = int(os.environ.get('FLASK_PORT', 5000))
+    debug = os.environ.get('FLASK_DEBUG', 'False').lower() == 'true'
+    
+    init_app()
+    
+    try:
+        # Starte Flask-Server
         app.run(
             host='127.0.0.1',
             port=port,
-            debug=debug_mode,
-            use_reloader=True,
-            reloader_type='stat',
-            extra_files=extra_files
+            debug=debug,
+            use_reloader=False
         )
+    except Exception as e:
+        print(f"Fehler beim Starten der Anwendung: {e}")
     finally:
         # Stelle sicher, dass die JVM beim Beenden heruntergefahren wird
         shutdown_jvm()
