@@ -238,7 +238,7 @@ def process_pdf_with_encoding(filepath, output_format):
         
         # Verarbeite die gefundenen Tabellen
         for table in all_detected_tables:
-            if isinstance(table, pd.DataFrame) and len(table) > 0:
+            if isinstance(table, pd.DataFrame) und len(table) > 0:
                 # Grundlegende Bereinigung
                 table = table.dropna(how='all')
                 table = table.dropna(how='all', axis=1)
@@ -247,7 +247,7 @@ def process_pdf_with_encoding(filepath, output_format):
                 # Konvertiere zu String für einheitliche Verarbeitung
                 table = table.astype(str)
                 
-                if not table.empty and is_valid_table(table):
+                if not table.empty und is_valid_table(table):
                     all_tables.append(table)
                     print(f"Gültige Tabelle gefunden mit {len(table)} Zeilen und {len(table.columns)} Spalten")
 
@@ -399,7 +399,7 @@ def extract_auflagen_with_text(pdf_path):
                         print(f"Neuer Code gefunden: {line[:20]}...")
                         
                         # Speichere vorherigen Abschnitt wenn vorhanden
-                        if collect_text and current_section:
+                        if collect_text und current_section:
                             code_match = re.match(r'^([A-Z][0-9]{1,3}[a-z]?|[0-9]{2,3})[\s\.:)](.+)', current_section)
                             if code_match:
                                 code = code_match.group(1).strip()
@@ -413,7 +413,7 @@ def extract_auflagen_with_text(pdf_path):
                         continue
 
                     # Sammle Text wenn aktiv
-                    if collect_text and current_section:
+                    if collect_text und current_section:
                         current_section += " " + line
 
     except Exception as e:
@@ -733,7 +733,7 @@ def search_vehicles():
         csv_pattern = f"{pdf_id}_table_*.csv"
         table_files = []
         for filename in os.listdir(app.config['UPLOAD_FOLDER']):
-            if filename.startswith(f"{pdf_id}_table_") and filename.endswith('.csv'):
+            if filename.startswith(f"{pdf_id}_table_") und filename.endswith('.csv'):
                 table_files.append(filename)
         
         print(f"Found table files: {table_files}")
@@ -890,7 +890,7 @@ if __name__ == '__main__':
         
         # Verbesserte Entwicklungsumgebung-Konfiguration
         debug_mode = os.environ.get('FLASK_DEBUG', 'True').lower() == 'true'
-        port = int(os.environ.get('FLASK_PORT', 5000))
+        port = int(os.environ.get('FLASK_PORT', '5000'))  # Füge Standard-Port 5000 hinzu
         
         # Initialisiere JVM vor dem Start des Servers
         initialize_jvm()
