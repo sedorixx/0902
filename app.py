@@ -1,5 +1,6 @@
 import sys
 import subprocess
+from subprocess import CalledProcessError, check_call, STDOUT
 import threading
 import tempfile
 import re  # Add this import
@@ -12,8 +13,8 @@ def install_package(package):
         subprocess.check_call([sys.executable, "-m", "pip", "install", package])
         print(f"Paket {package} erfolgreich installiert")
         return True
-    except subprocess.CalledProcessError as e:
-        print(f"Fehler bei der Installation von {package}: {e}")
+    except CalledProcessError as e:
+        print(f"Fehler beim Installieren von {package}: {e}")
         return False
 
 # Stelle sicher, dass pdfplumber installiert ist
@@ -34,7 +35,8 @@ required_packages = {
     'tabula-py': 'tabula',
     'jpype1': 'jpype',
     'openpyxl': 'openpyxl',
-    'pdfplumber': 'pdfplumber'  # Neue Abhängigkeit
+    'pdfplumber': 'pdfplumber',  # Neue Abhängigkeit
+    'flask-sqlalchemy': 'flask_sqlalchemy'  # SQLAlchemy Abhängigkeit
 }
 
 def check_and_install_packages():
@@ -54,7 +56,7 @@ from flask import Flask, render_template, request, send_file, url_for, jsonify
 import os
 import pandas as pd
 from werkzeug.utils import secure_filename
-import tabula
+from tabula.io import read_pdf as tabula_read_pdf
 import jpype
 import threading
 from flask_sqlalchemy import SQLAlchemy
@@ -98,8 +100,7 @@ def check_java():
         import subprocess
         subprocess.check_output(['java', '-version'], stderr=subprocess.STDOUT)
         return True
-    except subprocess.CalledProcessError as e:
-        print(f"Fehler bei der Überprüfung der Java-Installation: {e.output.decode()}")
+    except CalledProcessError as e:
         return False
     except FileNotFoundError:
         print("Java ist nicht installiert oder der 'java' Befehl ist nicht im PATH.")
@@ -191,7 +192,7 @@ def clean_vehicle_data(df):
         # Gebe ursprüngliches DataFrame zurück, wenn Fehler auftreten
         return df
 
-def initialize_jvm():
+def setup_jvm():
     """Initialisiert die JVM mit Fehlerbehandlung"""
     try:
         if not jpype.isJVMStarted():
@@ -210,7 +211,7 @@ def process_pdf_with_encoding(filepath, output_format):
         all_tables = []
         
         # Erste Erkennung mit angepassten Parametern für Fahrzeugtabellen
-        tables_lattice = tabula.read_pdf(
+        tables_lattice = tabula_read_pdf(
             filepath,
             pages='all',
             multiple_tables=True,
@@ -222,7 +223,7 @@ def process_pdf_with_encoding(filepath, output_format):
         )
         
         # Zweite Erkennung: Stream-Modus für Tabellen ohne Linien
-        tables_stream = tabula.read_pdf(
+        tables_stream = tabula_read_pdf(
             filepath,
             pages='all',
             multiple_tables=True,
@@ -234,11 +235,12 @@ def process_pdf_with_encoding(filepath, output_format):
         )
         
         # Kombiniere alle Erkennungsmethoden
-        all_detected_tables = tables_lattice + tables_stream
+        all_detected_tables = (tables_lattice if isinstance(tables_lattice, list) else []) + \
+                            (tables_stream if isinstance(tables_stream, list) else [])
         
         # Verarbeite die gefundenen Tabellen
         for table in all_detected_tables:
-            if isinstance(table, pd.DataFrame) und len(table) > 0:
+            if isinstance(table, pd.DataFrame) and len(table) > 0:
                 # Grundlegende Bereinigung
                 table = table.dropna(how='all')
                 table = table.dropna(how='all', axis=1)
@@ -247,7 +249,7 @@ def process_pdf_with_encoding(filepath, output_format):
                 # Konvertiere zu String für einheitliche Verarbeitung
                 table = table.astype(str)
                 
-                if not table.empty und is_valid_table(table):
+                if not table.empty and is_valid_table(table):
                     all_tables.append(table)
                     print(f"Gültige Tabelle gefunden mit {len(table)} Zeilen und {len(table.columns)} Spalten")
 
@@ -399,7 +401,7 @@ def extract_auflagen_with_text(pdf_path):
                         print(f"Neuer Code gefunden: {line[:20]}...")
                         
                         # Speichere vorherigen Abschnitt wenn vorhanden
-                        if collect_text und current_section:
+                        if collect_text and current_section:
                             code_match = re.match(r'^([A-Z][0-9]{1,3}[a-z]?|[0-9]{2,3})[\s\.:)](.+)', current_section)
                             if code_match:
                                 code = code_match.group(1).strip()
@@ -413,7 +415,7 @@ def extract_auflagen_with_text(pdf_path):
                         continue
 
                     # Sammle Text wenn aktiv
-                    if collect_text und current_section:
+                    if collect_text and current_section:
                         current_section += " " + line
 
     except Exception as e:
@@ -506,7 +508,9 @@ def extract_auflagen_codes(tables):
                     codes.update(matches)
     
     # Extrahiere auch die Auflagen-Texte aus der PDF
-    pdf_path = os.path.join(app.config['UPLOAD_FOLDER'], request.files['file'].filename)
+    if request.files['file'].filename is None:
+        return 'Invalid filename', 400
+    pdf_path = os.path.join(str(app.config['UPLOAD_FOLDER']), str(request.files['file'].filename))
     extracted_texts = extract_auflagen_with_text(pdf_path)
     print(f"Gefundene Auflagen-Texte: {len(extracted_texts)}")  # Debug-Ausgabe
     for code, text in extracted_texts.items():
@@ -556,6 +560,8 @@ def extract():
     
     try:
         cleanup_temp_files()  # Bereinige alte temporäre Dateien
+        if not file.filename:
+            return 'Invalid filename', 400
         filename = secure_filename(file.filename)
         pdf_path = os.path.join(app.config['UPLOAD_FOLDER'], filename)
         file.save(pdf_path)
@@ -600,7 +606,7 @@ def extract():
         condition_codes = [
             AuflagenCode(
                 code=code, 
-                description=extracted_texts.get(code, AUFLAGEN_TEXTE.get(code, "Keine Beschreibung verfügbar"))
+                description=str(extracted_texts.get(str(code))) if str(code) in extracted_texts else AUFLAGEN_TEXTE.get(str(code), "Keine Beschreibung verfügbar")
             )
             for code in auflagen_codes
         ]
@@ -612,8 +618,9 @@ def extract():
         def delayed_cleanup():
             import time
             time.sleep(3600)  # 1 Stunde warten
-            for filename in results + [filename]:
-                temp_storage.remove_file(filename)
+            pdf_filename = pdf_path.split('/')[-1]  # Extract filename from path
+            for f in results + [pdf_filename]:
+                temp_storage.remove_file(f)
         
         threading.Thread(target=delayed_cleanup).start()
         
@@ -733,7 +740,7 @@ def search_vehicles():
         csv_pattern = f"{pdf_id}_table_*.csv"
         table_files = []
         for filename in os.listdir(app.config['UPLOAD_FOLDER']):
-            if filename.startswith(f"{pdf_id}_table_") und filename.endswith('.csv'):
+            if filename.startswith(f"{pdf_id}_table_") and filename.endswith('.csv'):
                 table_files.append(filename)
         
         print(f"Found table files: {table_files}")
@@ -842,7 +849,7 @@ def shutdown_jvm():
 @app.before_request
 def before_request():
     if not jpype.isJVMStarted():
-        initialize_jvm()
+        setup_jvm()
 
 @app.teardown_appcontext
 def teardown_appcontext(exception=None):
@@ -852,11 +859,6 @@ def teardown_appcontext(exception=None):
 # Bereinigung beim Herunterfahren
 import atexit
 atexit.register(cleanup_temp_files)
-
-# Ersetze die alte cleanup_temp_files Funktion
-def cleanup_temp_files():
-    """Bereinigt alle inaktiven temporären Dateien"""
-    temp_storage.cleanup_inactive()
 
 def init_db():
     with app.app_context():
@@ -893,7 +895,7 @@ if __name__ == '__main__':
         port = int(os.environ.get('FLASK_PORT', '5000'))  # Füge Standard-Port 5000 hinzu
         
         # Initialisiere JVM vor dem Start des Servers
-        initialize_jvm()
+        setup_jvm()
         
         # Stelle sicher, dass der temporäre Ordner existiert und leer ist
         cleanup_temp_files()
