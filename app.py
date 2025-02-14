@@ -17,16 +17,6 @@ def install_package(package):
         print(f"Fehler beim Installieren von {package}: {e}")
         return False
 
-# Stelle sicher, dass pdfplumber installiert ist
-try:
-    import pdfplumber
-except ImportError:
-    if install_package('pdfplumber'):
-        import pdfplumber
-    else:
-        print("Fehler: Konnte pdfplumber nicht installieren")
-        sys.exit(1)
-
 required_packages = {
     'flask': 'Flask',
     'pandas': 'pandas',
