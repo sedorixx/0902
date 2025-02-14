@@ -31,7 +31,6 @@ python3.9 -m venv venv
 source venv/bin/activate
 
 # Installiere pip und Abhängigkeiten
-python -m pip install --upgrade pip setuptools wheel
 pip install -r requirements.txt
 
 # Setze Umgebungsvariablen
