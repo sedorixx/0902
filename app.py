@@ -895,9 +895,9 @@ if __name__ == '__main__':
         
         # Starte Flask-Server
         app.run(
-            host='127.0.0.1',
+            host='0.0.0.0',
             port=port,
-            debug=debug_mode,
+            debug=not debug_mode,
             use_reloader=False
         )
     except Exception as e:

@@ -1,3 +1,83 @@
 
-E: List directory /var/lib/apt/lists/partial is missing. - Acquire (13: Permission denied)
-pip3 nicht gefunden. Installation fehlgeschlagen.
+PDF Table Extractor - Koyeb Build Script
+======================================
+Python path configuration:
+  PYTHONHOME = '/home/koyeb/.heroku/python'
+  PYTHONPATH = '/home/koyeb'
+  program name = 'python3'
+  isolated = 0
+  environment = 1
+  user site = 1
+  import site = 1
+  sys._base_executable = '/usr/bin/python3'
+  sys.base_prefix = '/home/koyeb/.heroku/python'
+  sys.base_exec_prefix = '/home/koyeb/.heroku/python'
+  sys.platlibdir = 'lib'
+  sys.executable = '/usr/bin/python3'
+  sys.prefix = '/home/koyeb/.heroku/python'
+  sys.exec_prefix = '/home/koyeb/.heroku/python'
+  sys.path = [
+    '/home/koyeb',
+    '/home/koyeb/.heroku/python/lib/python310.zip',
+    '/home/koyeb/.heroku/python/lib/python3.10',
+    '/home/koyeb/.heroku/python/lib/python3.10/lib-dynload',
+  ]
+Fatal Python error: init_fs_encoding: failed to get the Python codec of the filesystem encoding
+Python runtime state: core initialized
+ModuleNotFoundError: No module named 'encodings'
+Current thread 0x00007f4349ba5000 (most recent call first):
+  <no Python frame>
+Python path configuration:
+  PYTHONHOME = '/home/koyeb/.heroku/python'
+  PYTHONPATH = '/home/koyeb'
+  program name = 'python3'
+  isolated = 0
+  environment = 1
+  user site = 1
+  import site = 1
+  sys._base_executable = '/usr/bin/python3'
+  sys.base_prefix = '/home/koyeb/.heroku/python'
+  sys.base_exec_prefix = '/home/koyeb/.heroku/python'
+  sys.platlibdir = 'lib'
+  sys.executable = '/usr/bin/python3'
+  sys.prefix = '/home/koyeb/.heroku/python'
+  sys.exec_prefix = '/home/koyeb/.heroku/python'
+  sys.path = [
+    '/home/koyeb',
+    '/home/koyeb/.heroku/python/lib/python310.zip',
+    '/home/koyeb/.heroku/python/lib/python3.10',
+    '/home/koyeb/.heroku/python/lib/python3.10/lib-dynload',
+  ]
+Fatal Python error: init_fs_encoding: failed to get the Python codec of the filesystem encoding
+Python runtime state: core initialized
+ModuleNotFoundError: No module named 'encodings'
+Current thread 0x00007f49fbb18000 (most recent call first):
+  <no Python frame>
+./build.sh: line 24: /home/koyeb/venv/bin/activate: No such file or directory
+./build.sh: line 27: pip: command not found
+./build.sh: line 30: pip: command not found
+Python path configuration:
+  PYTHONHOME = '/home/koyeb/.heroku/python'
+  PYTHONPATH = '/home/koyeb'
+  program name = 'python3'
+  isolated = 0
+  environment = 1
+  user site = 1
+  import site = 1
+  sys._base_executable = '/usr/bin/python3'
+  sys.base_prefix = '/home/koyeb/.heroku/python'
+  sys.base_exec_prefix = '/home/koyeb/.heroku/python'
+  sys.platlibdir = 'lib'
+  sys.executable = '/usr/bin/python3'
+  sys.prefix = '/home/koyeb/.heroku/python'
+  sys.exec_prefix = '/home/koyeb/.heroku/python'
+  sys.path = [
+    '/home/koyeb',
+    '/home/koyeb/.heroku/python/lib/python310.zip',
+    '/home/koyeb/.heroku/python/lib/python3.10',
+    '/home/koyeb/.heroku/python/lib/python3.10/lib-dynload',
+  ]
+Fatal Python error: init_fs_encoding: failed to get the Python codec of the filesystem encoding
+Python runtime state: core initialized
+ModuleNotFoundError: No module named 'encodings'
+Current thread 0x00007f0884071000 (most recent call first):
