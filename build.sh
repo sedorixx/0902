@@ -1,38 +1,32 @@
 #!/bin/bash
 
-echo "PDF Table Extractor - Build und Start Script"
-echo "========================================"
+echo "PDF Table Extractor - Koyeb Build Script"
+echo "======================================"
 
-# Prüfe Java Installation
-if ! command -v java &> /dev/null; then
-    echo "Fehler: Java wurde nicht gefunden!"
-    echo "Bitte installieren Sie Java mit:"
-    echo "brew install java"
-    exit 1
-fi
-
-# Prüfe Python Installation
-if ! command -v python3 &> /dev/null; then
-    echo "Fehler: Python wurde nicht gefunden!"
-    echo "Bitte installieren Sie Python mit:"
-    echo "brew install python3"
-    exit 1
-fi
+# Systemabhängigkeiten installieren
+apt-get update && apt-get install -y \
+    default-jre \
+    python3-pip \
+    python3-venv \
+    build-essential \
+    curl
 
 # Erstelle virtuelle Umgebung
-if [ ! -d "venv" ]; then
-    echo "Erstelle virtuelle Python-Umgebung..."
-    python3 -m venv venv
-fi
+python3 -m venv venv
 
 # Aktiviere virtuelle Umgebung
 source venv/bin/activate
 
-# Installiere Abhängigkeiten
-echo "Installiere Abhängigkeiten..."
+# Aktualisiere pip
+pip install --upgrade pip
+
+# Installiere Projektabhängigkeiten
 pip install -r requirements.txt
 
+# Setze Umgebungsvariablen
+export FLASK_APP=app.py
+export FLASK_ENV=production
+export PORT=${PORT:-8080}
+
 # Starte die Anwendung
-echo
-echo "Starte PDF Table Extractor..."
-python app.py
+gunicorn app:app --bind 0.0.0.0:$PORT --workers 4 --timeout 120

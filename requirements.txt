@@ -5,3 +5,4 @@ jpype1
 openpyxl
 flask-sqlalchemy
 pdfplumber
+gunicorn==20.1.0
