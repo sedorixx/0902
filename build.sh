@@ -3,8 +3,24 @@
 echo "PDF Table Extractor - Koyeb Build Script"
 echo "======================================"
 
-# Systemabhängigkeiten installieren
-apt-get update && apt-get install -y \
+# Prüfe ob sudo verfügbar ist und benutze es falls nötig
+if [ "$EUID" -ne 0 ]; then
+    if command -v sudo > /dev/null; then
+        SUDO=sudo
+    else
+        echo "Fehler: Dieses Script benötigt Root-Rechte."
+        echo "Bitte als Root ausführen oder sudo installieren."
+        exit 1
+    fi
+else
+    SUDO=""
+fi
+
+# Systemabhängigkeiten installieren mit korrekten Berechtigungen
+$SUDO mkdir -p /var/lib/apt/lists/partial
+$SUDO chmod 755 /var/lib/apt/lists/partial
+$SUDO apt-get clean
+$SUDO apt-get update && $SUDO apt-get install -y \
     default-jre \
     python3-pip \
     python3-venv \
