@@ -3,52 +3,39 @@
 echo "PDF Table Extractor - Koyeb Build Script"
 echo "======================================"
 
-# Versuche root-Rechte zu erhalten
-if [ "$EUID" -ne 0 ]; then 
-    exec sudo "$0" "$@"
-fi
-
-# System-Pakete installieren
-export DEBIAN_FRONTEND=noninteractive
-apt-get update
-apt-get install -y software-properties-common
-add-apt-repository -y ppa:deadsnakes/ppa
-apt-get update
+# Basic system packages installieren
+apt-get update || true
 apt-get install -y \
-    python3.9 \
-    python3.9-venv \
-    python3.9-dev \
+    python3 \
     python3-pip \
+    python3-venv \
     default-jre \
     build-essential \
-    curl
+    curl || true
 
-# Python-Umgebung konfigurieren
+# Setze grundlegende Umgebungsvariablen
 export PYTHONUNBUFFERED=1
 export PYTHONIOENCODING=utf-8
 export LC_ALL=C.UTF-8
 export LANG=C.UTF-8
 
-# Arbeitsverzeichnis erstellen und Berechtigungen setzen
-mkdir -p /app
-chown -R www-data:www-data /app
-chmod -R 755 /app
-cd /app
+# Erstelle und nutze Arbeitsverzeichnis
+WORKDIR="/app"
+mkdir -p $WORKDIR
+cd $WORKDIR || exit 1
 
-# Virtuelle Umgebung erstellen
-python3.9 -m venv venv
-chown -R www-data:www-data venv
-chmod -R 755 venv
+# Erstelle virtuelle Umgebung
+python3 -m venv venv || exit 1
+. ./venv/bin/activate || exit 1
 
-# Als www-data-User ausführen
-su www-data << 'EOF'
-source venv/bin/activate
+# Installiere Python-Pakete
 pip install --no-cache-dir --upgrade pip setuptools wheel
 pip install --no-cache-dir -r requirements.txt
 
+# Setze Anwendungsvariablen
 export FLASK_APP=app.py
 export FLASK_ENV=production
 export PORT=${PORT:-8080}
 
-exec venv/bin/gunicorn app:app --bind 0.0.0.0:$PORT --workers 4 --timeout 120
-EOF
+# Starte Anwendung
+python -m gunicorn app:app --bind 0.0.0.0:$PORT --workers 4 --timeout 120
