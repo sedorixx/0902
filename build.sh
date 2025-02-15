@@ -3,46 +3,34 @@
 echo "PDF Table Extractor - Koyeb Build Script"
 echo "======================================"
 
-# Add deadsnakes PPA und installiere Python 3.9
-apt-get update && apt-get install -y software-properties-common && \
-add-apt-repository -y ppa:deadsnakes/ppa && \
-apt-get update && \
-DEBIAN_FRONTEND=noninteractive apt-get install -y \
-    python3.9 \
-    python3.9-dev \
-    python3.9-distutils \
-    python3.9-venv \
-    python3-pip \
-    default-jre \
-    build-essential \
-    curl \
-    locales
+# Setze Basis-Umgebungsvariablen
+export HOME=/workspace
+export PYTHONUNBUFFERED=1
+export LANG=C.UTF-8
+export LC_ALL=C.UTF-8
 
-# Setze Locale
-locale-gen en_US.UTF-8
-update-locale LANG=en_US.UTF-8 LC_ALL=en_US.UTF-8
+# Erstelle Arbeitsverzeichnis mit korrekten Rechten
+mkdir -p $HOME/.local/bin
+export PATH="$HOME/.local/bin:$PATH"
 
-# Konfiguriere Python-Umgebung
-export LANG=en_US.UTF-8
-export LC_ALL=en_US.UTF-8
-export PYTHONIOENCODING=utf-8
-unset PYTHONPATH
-unset PYTHONHOME
+# Installiere Python ohne apt
+cd $HOME
+curl -O https://www.python.org/ftp/python/3.9.16/Python-3.9.16.tgz
+tar xzf Python-3.9.16.tgz
+cd Python-3.9.16
+./configure --enable-optimizations --prefix=$HOME/.local
+make -j4
+make install
 
-# Installiere pip für Python 3.9
-curl -sS https://bootstrap.pypa.io/get-pip.py | python3.9
+# Setze Python-Pfade
+export PATH="$HOME/.local/bin:$PATH"
+export PYTHONPATH="$HOME/.local/lib/python3.9/site-packages"
 
-# Erstelle und aktiviere venv
-cd /tmp
-python3.9 -m venv venv
-. ./venv/bin/activate
+# Installiere pip
+curl -sS https://bootstrap.pypa.io/get-pip.py | $HOME/.local/bin/python3
 
-# Installiere Abhängigkeiten
-pip install --no-cache-dir --upgrade pip setuptools wheel
-pip install --no-cache-dir -r /app/requirements.txt
+# Installiere Requirements
+$HOME/.local/bin/pip3 install --user -r requirements.txt
 
-# Wechsle ins App-Verzeichnis
-cd /app
-
-# Starte Anwendung
-exec /tmp/venv/bin/gunicorn app:app --bind 0.0.0.0:${PORT:-8080} --workers 4 --timeout 120
+# Starte die Anwendung
+exec $HOME/.local/bin/python3 -m gunicorn app:app --bind 0.0.0.0:${PORT:-8080} --workers 4 --timeout 120
