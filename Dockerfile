@@ -16,6 +16,9 @@ WORKDIR /app
 # Upgrade pip
 RUN pip install --no-cache-dir --upgrade pip
 
+# Install numpy first
+RUN pip install --no-cache-dir numpy==1.21.0
+
 # Install Python dependencies
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
@@ -34,8 +37,10 @@ ENV UPLOAD_FOLDER=/app/uploads
 # Expose port
 EXPOSE 5000
 
-# Initialize database
-RUN python migrations.py
+# Initialize database and create tables
+RUN flask db init && \
+    flask db migrate && \
+    flask db upgrade
 
 # Run the application
 CMD ["gunicorn", "--bind", "0.0.0.0:5000", "wsgi:app"]
