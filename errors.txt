@@ -1,35 +1,7 @@
 
-PDF Table Extractor - Koyeb Build Script
-======================================
-./build.sh: line 8: pip: command not found
-Python path configuration:
-  PYTHONHOME = '/home/koyeb/.heroku/python'
-  PYTHONPATH = '/home/koyeb'
-  program name = 'python'
-  isolated = 0
-  environment = 1
-  user site = 1
-  import site = 1
-  sys._base_executable = '/usr/bin/python'
-  sys.base_prefix = '/home/koyeb/.heroku/python'
-  sys.base_exec_prefix = '/home/koyeb/.heroku/python'
-  sys.platlibdir = 'lib'
-  sys.executable = '/usr/bin/python'
-  sys.prefix = '/home/koyeb/.heroku/python'
-  sys.exec_prefix = '/home/koyeb/.heroku/python'
-  sys.path = [
-    '/home/koyeb',
-    '/home/koyeb/.heroku/python/lib/python310.zip',
-    '/home/koyeb/.heroku/python/lib/python3.10',
-    '/home/koyeb/.heroku/python/lib/python3.10/lib-dynload',
-  ]
-Fatal Python error: init_fs_encoding: failed to get the Python codec of the filesystem encoding
-Python runtime state: core initialized
-ModuleNotFoundError: No module named 'encodings'
-Current thread 0x00007efcbd7e0000 (most recent call first):
-  <no Python frame>
-
-  curl -fsSL https://raw.githubusercontent.com/koyeb/koyeb-cli/master/install.sh | sh
-  /workspaces/0902/__pycache__
- /workspaces/0902/__pycache__
- 
+E: List directory /var/lib/apt/lists/partial is missing. - Acquire (13: Permission denied)
+./build.sh: line 19: python3.9: command not found
+./build.sh: line 20: /app/venv/bin/activate: No such file or directory
+./build.sh: line 23: /app/venv/bin/pip: No such file or directory
+./build.sh: line 24: /app/venv/bin/pip: No such file or directory
+./build.sh: line 37: /app/venv/bin/python: No such file or directory

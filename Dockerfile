@@ -1,21 +1,42 @@
 FROM python:3.9-slim
 
-# System-Abhängigkeiten
+# System-Abhängigkeiten und Berechtigungen
 RUN apt-get update && apt-get install -y \
     default-jre \
     build-essential \
     python3-dev \
-    && rm -rf /var/lib/apt/lists/*
+    python3-pip \
+    python3-venv \
+    && rm -rf /var/lib/apt/lists/* \
+    && mkdir -p /app \
+    && chmod 755 /app
 
-# Arbeitsverzeichnis erstellen
+# Benutzer erstellen und Berechtigungen setzen
+RUN useradd -m -u 1000 appuser \
+    && chown -R appuser:appuser /app
+
+# Arbeitsverzeichnis setzen
 WORKDIR /app
 
-# Abhängigkeiten kopieren und installieren
+# Kopiere Requirements und installiere Abhängigkeiten
 COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+RUN pip install --no-cache-dir -r requirements.txt \
+    && chown appuser:appuser requirements.txt
 
-# App-Code kopieren
+# Kopiere App-Code
 COPY . .
+RUN chown -R appuser:appuser .
+
+# Wechsle zum nicht-root Benutzer
+USER appuser
+
+# Umgebungsvariablen setzen
+ENV PYTHONUNBUFFERED=1 \
+    PYTHONPATH=/app \
+    PATH="/app/.local/bin:$PATH" \
+    FLASK_APP=app.py \
+    FLASK_ENV=production \
+    PORT=8080
 
 # Port freigeben
 EXPOSE 8080
