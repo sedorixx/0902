@@ -41,5 +41,8 @@ EXPOSE 5000
 COPY migrations.py .
 RUN python migrations.py
 
+# Copy gunicorn config
+COPY gunicorn.conf.py .
+
 # Run the application
-CMD ["gunicorn", "--bind", "0.0.0.0:5000", "wsgi:app"]
+CMD ["gunicorn", "--config", "gunicorn.conf.py", "wsgi:app"]
