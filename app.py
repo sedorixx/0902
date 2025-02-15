@@ -22,13 +22,13 @@ def cleanup_temp_files():
         print(f"Error cleaning temporary files: {e}")
 
 try:
-    import jpype
-    from tabula.io import read_pdf
+    import jpype # type: ignore
+    from tabula.io import read_pdf # type: ignore
 except ImportError:
     print("Warning: tabula-py not available, will use fallback methods")
 
 # Import other required packages
-import pandas as pd
+import pandas as pd # type: ignore
 import pdfplumber # type: ignore
 from PyPDF2 import PdfReader # type: ignore
 from flask import Flask, render_template, request, send_file, url_for, jsonify, redirect # type: ignore
@@ -103,12 +103,12 @@ check_and_install_packages()
 
 # Jetzt importiere die benötigten Module
 import os
-import pandas as pd
-from werkzeug.utils import secure_filename
+import pandas as pd # type: ignore
+from werkzeug.utils import secure_filename # type: ignore
 from tabula import read_pdf # type: ignore
-import jpype
+import jpype # type: ignore
 import threading
-from flask_sqlalchemy import SQLAlchemy
+from flask_sqlalchemy import SQLAlchemy # type: ignore
 from extensions import db
 from models import AuflagenCode
 
@@ -132,8 +132,8 @@ db.init_app(app)
 
 # Überprüfe Abhängigkeiten beim Start
 try:
-    import jpype
-    import tabula
+    import jpype # type: ignore
+    import tabula # type: ignore
 except ImportError as e:
     print("Fehler: Benötigte Pakete nicht gefunden.")
     print("Bitte installieren Sie die erforderlichen Pakete mit:")
