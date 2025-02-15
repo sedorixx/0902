@@ -1,6 +1,15 @@
 
-Fatal Python error: init_fs_encoding: failed to get the Python codec of the filesystem encoding
-Python runtime state: core initialized
-ModuleNotFoundError: No module named 'encodings'
-Current thread 0x00007f8a5ca3a000 (most recent call first):
-  <no Python frame>
+E: List directory /var/lib/apt/lists/partial is missing. - Acquire (13: Permission denied)
+update-alternatives: error: alternative path /usr/bin/python3.9 doesn't exist
+update-alternatives: error: no alternatives for python3
+The virtual environment was not created successfully because ensurepip is not
+available.  On Debian/Ubuntu systems, you need to install the python3-venv
+package using the following command.
+    apt install python3.10-venv
+You may need to use sudo with that command.  After installing the python3-venv
+package, recreate your virtual environment.
+Failing command: /app/venv/bin/python3
+./build.sh: line 29: /app/venv/bin/activate: No such file or directory
+./build.sh: line 32: /app/venv/bin/pip: No such file or directory
+./build.sh: line 35: /app/venv/bin/pip: No such file or directory
+/app/venv/bin/python: No module named gunicorn
