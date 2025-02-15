@@ -1,12 +1,30 @@
 
-E: Could not open lock file /var/cache/apt/archives/lock - open (13: Permission denied)
-E: Unable to lock directory /var/cache/apt/archives/
 E: List directory /var/lib/apt/lists/partial is missing. - Acquire (13: Permission denied)
-Reading package lists...
-E: List directory /var/lib/apt/lists/partial is missing. - Acquire (13: Permission denied)
-./build.sh: line 36: python3.9: command not found
-./build.sh: line 37: /workspace/venv/bin/activate: No such file or directory
-./build.sh: line 40: /workspace/venv/bin/pip: No such file or directory
-./build.sh: line 41: /workspace/venv/bin/pip: No such file or directory
-./build.sh: line 49: /workspace/venv/bin/gunicorn: No such file or directory
-Timer: Builder ran for 16.06593884s and ended at 2025-02-15T02:05:16Z
+E: Could not open lock file /var/lib/dpkg/lock-frontend - open (13: Permission denied)
+E: Unable to acquire the dpkg frontend lock (/var/lib/dpkg/lock-frontend), are you root?
+Python path configuration:
+  PYTHONHOME = '$WORKDIR/.heroku/python'
+  PYTHONPATH = '$WORKDIR'
+  program name = 'python3'
+  isolated = 0
+  environment = 1
+  user site = 1
+  import site = 1
+  sys._base_executable = '/usr/bin/python3'
+  sys.base_prefix = '$WORKDIR/.heroku/python'
+  sys.base_exec_prefix = '$WORKDIR/.heroku/python'
+  sys.platlibdir = 'lib'
+  sys.executable = '/usr/bin/python3'
+  sys.prefix = '$WORKDIR/.heroku/python'
+  sys.exec_prefix = '$WORKDIR/.heroku/python'
+  sys.path = [
+    '$WORKDIR',
+    '$WORKDIR/.heroku/python/lib/python310.zip',
+    '$WORKDIR/.heroku/python/lib/python3.10',
+    '$WORKDIR/.heroku/python/lib/python3.10/lib-dynload',
+  ]
+Fatal Python error: init_fs_encoding: failed to get the Python codec of the filesystem encoding
+Python runtime state: core initialized
+ModuleNotFoundError: No module named 'encodings'
+Current thread 0x00007f9825830000 (most recent call first):
+  <no Python frame>
