@@ -1,0 +1,57 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="card">
+    <div class="card-header bg-danger text-white">
+        <h2 class="h5 mb-0">
+            <i class="fas fa-exclamation-circle me-2"></i>Fehler
+        </h2>
+    </div>
+    <div class="card-body">
+        <div class="alert alert-danger mb-4">
+            <div class="d-flex align-items-center mb-3">
+                <i class="fas fa-exclamation-triangle fa-2x me-3"></i>
+                <div>
+                    <h4 class="alert-heading mb-1">{{ message }}</h4>
+                    {% if message == "Keine Tabellen gefunden" %}
+                    <ul class="mb-0 mt-2">
+                        <li>Die PDF-Datei enthält möglicherweise keine erkennbaren Tabellen</li>
+                        <li>Die Tabellen könnten als Bilder vorliegen</li>
+                        <li>Das Tabellenformat könnte ungewöhnlich sein</li>
+                        <li>Versuchen Sie eine andere PDF-Datei</li>
+                    </ul>
+                    {% else %}
+                    {% if details %}
+                    <ul class="mb-0 mt-2">
+                        {% for detail in details %}
+                        <li>{{ detail }}</li>
+                        {% endfor %}
+                    </ul>
+                    {% endif %}
+                    {% endif %}
+                </div>
+            </div>
+        </div>
+
+        <div class="alert alert-info">
+            <h5 class="mb-3">
+                <i class="fas fa-info-circle me-2"></i>Hilfreiche Tipps:
+            </h5>
+            <ul class="mb-0">
+                <li>Stellen Sie sicher, dass die Datei nicht beschädigt ist</li>
+                <li>Prüfen Sie, ob die PDF-Datei Tabellen enthält</li>
+                <li>Versuchen Sie es mit einer anderen PDF-Datei</li>
+            </ul>
+        </div>
+
+        <div class="mt-4">
+            <a href="{{ url_for('index') }}" class="btn btn-primary">
+                <i class="fas fa-upload me-2"></i>Neue Datei hochladen
+            </a>
+            <a href="{{ url_for('list_files') }}" class="btn btn-secondary">
+                <i class="fas fa-list me-2"></i>Alle Dateien anzeigen
+            </a>
+        </div>
+    </div>
+</div>
+{% endblock %}

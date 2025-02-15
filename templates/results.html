@@ -119,7 +119,7 @@
         </div>
         
         <div class="tab-pane fade" id="codes" role="tabpanel">
-            {% if condition_codes %}
+            {% if auflagen_codes %}
             <div class="card-body">
                 <div class="row">
                     <div class="col-md-6">
@@ -129,7 +129,7 @@
                             </div>
                             <div class="card-body">
                                 <div class="d-flex flex-wrap gap-2">
-                                    {% for code in condition_codes %}
+                                    {% for code in auflagen_codes %}
                                     <span class="badge bg-primary" data-bs-toggle="tooltip" 
                                           title="{{ code.description }}">
                                         {{ code.code }}
@@ -146,7 +146,7 @@
                             </div>
                             <div class="card-body">
                                 <div class="list-group">
-                                    {% for code in condition_codes %}
+                                    {% for code in auflagen_codes %}
                                     <div class="list-group-item">
                                         <h6 class="mb-1">{{ code.code }}</h6>
                                         <p class="mb-1">{{ code.description }}</p>

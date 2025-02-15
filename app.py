@@ -1,21 +1,82 @@
+from __future__ import annotations
 import sys
 import subprocess
-from subprocess import CalledProcessError, check_call, STDOUT
-import threading
+import threading # type: ignore
 import tempfile
-import re  # Add this import
-import jpype
-import PyPDF2  # Ersetze pdfplumber import mit PyPDF2
+import re # type: ignore
+import os
+from typing import Any, Dict, List, Optional, Set, Union # type: ignore
+from pathlib import Path
 
-def install_package(package):
-    """Installiert ein Python-Paket über pip"""
+# Try to import jpype and tabula with error handling
+tabula_available = False
+
+def cleanup_temp_files():
+    """Clean up temporary files in the upload folder"""
     try:
-        subprocess.check_call([sys.executable, "-m", "pip", "install", package])
-        print(f"Paket {package} erfolgreich installiert")
-        return True
-    except CalledProcessError as e:
-        print(f"Fehler beim Installieren von {package}: {e}")
-        return False
+        for filename in os.listdir(app.config['UPLOAD_FOLDER']):
+            file_path = os.path.join(app.config['UPLOAD_FOLDER'], filename)
+            if os.path.isfile(file_path):
+                os.unlink(file_path)
+    except Exception as e:
+        print(f"Error cleaning temporary files: {e}")
+
+try:
+    import jpype
+    from tabula.io import read_pdf
+except ImportError:
+    print("Warning: tabula-py not available, will use fallback methods")
+
+# Import other required packages
+import pandas as pd
+import pdfplumber # type: ignore
+from PyPDF2 import PdfReader # type: ignore
+from flask import Flask, render_template, request, send_file, url_for, jsonify, redirect # type: ignore
+from werkzeug.utils import secure_filename # type: ignore
+from extensions import db
+from models import AuflagenCode # type: ignore
+from datetime import datetime
+
+class TempStorage:
+    def __init__(self):
+        self.active_files = set()
+
+    def add_file(self, filename):
+        self.active_files.add(filename)
+
+    def remove_file(self, filename):
+        if filename in self.active_files:
+            self.active_files.remove(filename)
+
+# Initialize Flask app and temp storage
+app = Flask(__name__)
+temp_storage = TempStorage()
+app.config.update(
+    UPLOAD_FOLDER=tempfile.mkdtemp(),
+    MAX_CONTENT_LENGTH=50 * 1024 * 1024,  # 50MB max-limit
+    TEMPLATES_AUTO_RELOAD=True,
+    SQLALCHEMY_DATABASE_URI='sqlite:///auflagen.db',
+    SQLALCHEMY_TRACK_MODIFICATIONS=False,
+    UPLOAD_EXTENSIONS=['.pdf']
+)
+
+# Initialize database
+db.init_app(app)
+
+# Print temporary directory location
+print(f"Temporäres Verzeichnis erstellt: {app.config['UPLOAD_FOLDER']}")
+
+# Create upload folder if it doesn't exist
+os.makedirs(app.config['UPLOAD_FOLDER'], exist_ok=True)
+
+# Ensure JVM is properly initialized if tabula is available
+if tabula_available:
+    try:
+        if not jpype.isJVMStarted(): # type: ignore
+            jpype.startJVM(convertStrings=False) # type: ignore
+    except Exception as e:
+        print(f"Warning: JVM initialization failed: {e}")
+        print("Will use fallback methods for PDF processing")
 
 required_packages = {
     'flask': 'Flask',
@@ -41,11 +102,10 @@ def check_and_install_packages():
 check_and_install_packages()
 
 # Jetzt importiere die benötigten Module
-from flask import Flask, render_template, request, send_file, url_for, jsonify
 import os
 import pandas as pd
 from werkzeug.utils import secure_filename
-from tabula.io import read_pdf as tabula_read_pdf
+from tabula import read_pdf # type: ignore
 import jpype
 import threading
 from flask_sqlalchemy import SQLAlchemy
@@ -89,13 +149,10 @@ def check_java():
         import subprocess
         subprocess.check_output(['java', '-version'], stderr=subprocess.STDOUT)
         return True
-    except CalledProcessError as e:
-        return False
-    except FileNotFoundError:
-        print("Java ist nicht installiert oder der 'java' Befehl ist nicht im PATH.")
+    except:
         return False
 
-def is_valid_table(df):
+def is_valid_table(df: pd.DataFrame) -> bool:
     """Überprüft, ob ein DataFrame eine echte Tabelle ist"""
     if df.empty or len(df.columns) < 2 or len(df) < 2:
         return False
@@ -106,30 +163,23 @@ def is_valid_table(df):
     if (non_empty_cells / total_rows < 0.5).any():
         return False
     
-    # Erlaube längere Texte in einzelnen Zellen
-    text_lengths = df.astype(str).apply(lambda x: x.str.len().mean())
-    if (text_lengths > 200).all():  # Erhöhe den Schwellenwert
-        return False
-    
     # Prüfe auf Struktur statt nur numerische Werte
     has_structure = False
     for col in df.columns:
         col_values = df[col].astype(str)
         # Prüfe auf Muster in den Werten
-        if (col_values.str.match(r'^[\d.,/-]+$').mean() > 0.3 or  # Numerische Muster
-            col_values.str.match(r'^[A-Za-z]').mean() > 0.7):     # Text-Muster
+        mean_value = col_values.str.match(r'^[A-Za-z]').mean()
+        if mean_value is not None and mean_value > 0.7:  # Text-Muster
             has_structure = True
             break
     
     return has_structure
 
-def clean_vehicle_data(df):
+def clean_vehicle_data(df: pd.DataFrame) -> pd.DataFrame:
     """Bereinigt und standardisiert Fahrzeugdaten"""
     try:
         # Konvertiere alle Spalten zu String
         df = df.astype(str)
-        
-        # Standardisiere Spaltennamen (nur für String-Spalten)
         df.columns = [str(col).lower().strip() for col in df.columns]
         
         # Typische Fahrzeug-Spalten erkennen und umbenennen
@@ -181,78 +231,86 @@ def clean_vehicle_data(df):
         # Gebe ursprüngliches DataFrame zurück, wenn Fehler auftreten
         return df
 
-def setup_jvm():
-    """Initialisiert die JVM mit Fehlerbehandlung"""
+def initialize_jvm_with_fallback():
+    """Initialisiert die JVM mit Fallback-Mechanismus"""
     try:
         if not jpype.isJVMStarted():
-            jvm_path = jpype.getDefaultJVMPath()
-            if not os.path.exists(jvm_path):
-                raise FileNotFoundError(f"JVM shared library file not found: {jvm_path}")
-            jpype.startJVM(jvm_path, convertStrings=False)  # Verhindert automatische String-Konvertierung
+            jpype.getDefaultJVMPath()  # Prüfe zuerst den JVM-Pfad
+            jpype.startJVM(
+                jpype.getDefaultJVMPath(),
+                "-Djava.class.path=/usr/share/java/tabula-java.jar",
+                convertStrings=False,
+                interrupt=True
+            )
+        return True
     except Exception as e:
         print(f"JVM Initialisierungsfehler: {str(e)}")
         print("Verwende Fallback-Methode...")
-        # Hier könnte eine alternative Implementierung erfolgen
+        return False
 
 def process_pdf_with_encoding(filepath, output_format):
     """Verarbeitet PDF mit verbesserter Tabellenerkennung und extrahiert alle Tabellen"""
     try:
-        all_tables = []
+        # Erste Erkennung mit angepasstem Encoding
+        try:
+            tables_lattice = read_pdf(
+                filepath,
+                pages='all',
+                multiple_tables=True,
+                lattice=True,
+                guess=True,
+                silent=True,
+                encoding='utf-8',
+                pandas_options={'header': 0}
+            )
+        except UnicodeDecodeError:
+            print("UnicodeDecodeError encountered. Retrying with encoding='latin1'")
+            tables_lattice = read_pdf(
+                filepath,
+                pages='all',
+                multiple_tables=True,
+                lattice=True,
+                guess=True,
+                silent=True,
+                encoding='latin1',
+                pandas_options={'header': 0}
+            )
+        if tables_lattice:
+            return tables_lattice
         
-        # Erste Erkennung mit angepassten Parametern für Fahrzeugtabellen
-        tables_lattice = tabula_read_pdf(
-            filepath,
-            pages='all',
-            multiple_tables=True,
-            lattice=True,
-            guess=True,
-            silent=True,
-            encoding='utf-8',
-            pandas_options={'header': 0}  # Erste Zeile als Header
-        )
-        
-        # Zweite Erkennung: Stream-Modus für Tabellen ohne Linien
-        tables_stream = tabula_read_pdf(
-            filepath,
-            pages='all',
-            multiple_tables=True,
-            lattice=False,
-            stream=True,
-            guess=True,
-            silent=True,
-            encoding='utf-8'
-        )
-        
-        # Kombiniere alle Erkennungsmethoden
-        all_detected_tables = (tables_lattice if isinstance(tables_lattice, list) else []) + \
-                            (tables_stream if isinstance(tables_stream, list) else [])
-        
-        # Verarbeite die gefundenen Tabellen
-        for table in all_detected_tables:
-            if isinstance(table, pd.DataFrame) and len(table) > 0:
-                # Grundlegende Bereinigung
-                table = table.dropna(how='all')
-                table = table.dropna(how='all', axis=1)
-                table = table.fillna('')
-                
-                # Konvertiere zu String für einheitliche Verarbeitung
-                table = table.astype(str)
-                
-                if not table.empty and is_valid_table(table):
-                    all_tables.append(table)
-                    print(f"Gültige Tabelle gefunden mit {len(table)} Zeilen und {len(table.columns)} Spalten")
-
-        return all_tables
-
-    except Exception as e:
-        print(f"Fehler bei der Tabellenextraktion: {str(e)}")
+        # Zweite Erkennung mit Stream-Modus und Fallback
+        try:
+            tables_stream = read_pdf(
+                filepath,
+                pages='all',
+                multiple_tables=True,
+                guess=True,
+                lattice=True,
+                stream=True,
+                encoding='utf-8',
+                java_options=['-Dfile.encoding=UTF8']
+            )
+        except UnicodeDecodeError:
+            print("UnicodeDecodeError encountered for stream mode. Retrying with encoding='latin1'")
+            tables_stream = read_pdf(
+                filepath,
+                pages='all',
+                multiple_tables=True,
+                guess=True,
+                lattice=True,
+                stream=True,
+                encoding='latin1',
+                java_options=['-Dfile.encoding=latin1']
+            )
+        if tables_stream:
+            return tables_stream
+            
+        print("No tables found in PDF")
         return []
-
-@app.route('/', methods=['GET'])
-def index():
-    if not check_java():
-        return "Fehler: Java muss installiert sein, um diese Anwendung zu nutzen. Bitte installieren Sie Java und stellen Sie sicher, dass der 'java' Befehl im PATH ist.", 500
-    return render_template('index.html')
+        
+    except Exception as e:
+        print(f"Table extraction error: {e}")
+        return []
 
 def convert_table_to_html(df):
     """Konvertiert DataFrame in formatiertes HTML"""
@@ -260,250 +318,96 @@ def convert_table_to_html(df):
         classes='table table-striped table-hover',
         index=False,
         border=0,
-        escape=False,
-        na_rep=''
     )
 
-# Füge temporären Storage-Handler hinzu
-class TemporaryStorage:
-    """Verwaltet temporäre Dateien mit automatischer Bereinigung"""
-    def __init__(self, base_dir):
-        self.base_dir = base_dir
-        self.active_files = set()
-    
-    def add_file(self, filename):
-        """Markiert eine Datei als aktiv"""
-        self.active_files.add(filename)
-    
-    def remove_file(self, filename):
-        """Entfernt eine Datei aus dem aktiven Set und löscht sie"""
-        if filename in self.active_files:
-            self.active_files.remove(filename)
-            filepath = os.path.join(self.base_dir, filename)
-            try:
-                if os.path.exists(filepath):
-                    os.remove(filepath)
-            except Exception as e:
-                print(f"Fehler beim Löschen von {filepath}: {e}")
-    
-    def cleanup_inactive(self):
-        """Löscht alle inaktiven Dateien"""
-        try:
-            for filename in os.listdir(self.base_dir):
-                if filename not in self.active_files:
-                    filepath = os.path.join(self.base_dir, filename)
-                    try:
-                        if os.path.isfile(filepath):
-                            os.remove(filepath)
-                    except Exception as e:
-                        print(f"Fehler beim Löschen von {filepath}: {e}")
-        except Exception as e:
-            print(f"Fehler bei der Bereinigung: {e}")
+def extract_auflagen_codes(tables):
+    """Extrahiert Auflagen-Codes ausschließlich aus bestimmten Spalten der Tabellen"""
+    codes = set()
+    target_columns = [
+        'reifenbezogene auflagen und hinweise',
+        'auflagen und hinweise'
+    ]
 
-# Initialisiere Storage-Handler nach app-Definition
-temp_storage = TemporaryStorage(app.config['UPLOAD_FOLDER'])
+    print("Starting Auflagen code extraction...")
+    for i, df in enumerate(tables):
+        if not isinstance(df, pd.DataFrame):
+            continue
 
-def cleanup_temp_files():
-    """Bereinigt alle inaktiven temporären Dateien"""
-    temp_storage.cleanup_inactive()
+        print(f"\nProcessing table {i+1}")
+        # Clean column names by removing \r and \n and normalizing whitespace
+        df.columns = [str(col).lower().replace('\r', ' ').replace('\n', ' ').strip() for col in df.columns]
+        print(f"Normalized columns: {df.columns.tolist()}")
 
-# Registriere cleanup NACH der Funktionsdefinition
-import atexit
-atexit.register(cleanup_temp_files)
+        # Check each column
+        for col in df.columns:
+            cleaned_col = ' '.join(col.split())  # Normalize whitespace
+            if any(target in cleaned_col for target in target_columns):
+                print(f"Found matching column: {col}")
+                cell_values = df[col].astype(str)
 
-# Definiere Auflagen-Codes und Texte getrennt
-AUFLAGEN_CODES = [
-    "155", 
-    "A01", "A02", "A03", "A04", "A05", "A06", "A07", "A08", "A09", "A10",
-    "A11", "A12", "A13", "A14", "A14a", "A15", "A58"
-]
+                # Process each cell
+                for cell in cell_values:
+                    cell = str(cell).strip()
+                    if not cell:
+                        continue
+                        
+                    print(f"Processing cell value: {cell}")
+                    # First try to find codes with explicit spacing
+                    matches = re.finditer(r'(?:^|\s)([A-Za-z]{1,2}\d{1,3}|[A-Z]+\d[a-z]?)(?:\s|$)', cell)
+                    for match in matches:
+                        code = match.group(1).strip()
+                        print(f"Found code: {code}")
+                        codes.add(code)
 
-AUFLAGEN_TEXTE = {
-    "155": "Das Sonderrad (gepr. Radlast) ist in Verbindung mit dieser Reifengröße nur zulässig bis zu einer zul. Achslast von 1550 kg...",
-    "A01": "Nach Durchführung der Technischen Änderung ist das Fahrzeug unter Vorlage der vorliegenden ABE unverzüglich einem amtlich anerkannten Sachverständigen einer Technischen Prüfstelle vorzuführen.",
-    "A02": "Die Verwendung der Rad-/Reifenkombination ist nur zulässig an Fahrzeugen mit serienmäßiger Rad-/Reifenkombination in den Größen gemäß Fahrzeugpapieren.",
-    "A03": "Die Verwendung der Rad-/Reifenkombination ist nur zulässig, sofern diese in den entsprechenden Fahrzeugpapieren eingetragen ist.",
-    "A04": "Die Rad-/Reifenkombination ist nur zulässig für Fahrzeugausführungen mit Allradantrieb.",
-    "A05": "Die Rad-/Reifenkombination ist nur zulässig für Fahrzeugausführungen mit Heckantrieb.",
-    "A06": "Die Rad-/Reifenkombination ist nur zulässig für Fahrzeugausführungen mit Frontantrieb.",
-    "A07": "Die mindestens erforderlichen Geschwindigkeitsbereiche (PR-Zahl) und Tragfähigkeiten der verwendeten Reifen sind den Fahrzeugpapieren zu entnehmen.",
-    "A08": "Verwendung nur zulässig an Fahrzeugen mit serienmäßiger Rad-/Reifenkombination gemäß EG-Typgenehmigung.",
-    "A09": "Die Rad-/Reifenkombination ist nur an der Vorderachse zulässig.",
-    "A10": "Es dürfen nur feingliedrige Schneeketten an der Hinterachse verwendet werden.",
-    "A11": "Es dürfen nur feingliedrige Schneeketten an der Antriebsachse verwendet werden.",
-    "A12": "Die Verwendung von Schneeketten ist nicht zulässig.",
-    "A13": "Nur zulässig für Fahrzeuge ohne Schneekettenbetrieb.",
-    "A14": "Zum Auswuchten der Räder dürfen an der Felgenaußenseite nur Klebegewichte unterhalb der Felgenschulter angebracht werden.",
-    "A14a": "Zum Auswuchten der Räder dürfen an der Felgenaußenseite keine Gewichte angebracht werden.",
-    "A15": "Die Verwendung des Rades mit genannter Einpresstiefe ist nur zulässig, wenn das Fahrzeug serienmäßig mit Rädern dieser Einpresstiefe ausgerüstet ist.",
-    "A58": "Rad-/Reifenkombination(en) nicht zulässig an Fahrzeugen mit Allradantrieb.",
-    "Lim": "Nur zulässig für Limousinen-Ausführungen des Fahrzeugtyps.",
-    "NoH": "Die Verwendung an Fahrzeugen mit Niveauregulierung ist nicht zulässig."
-}
+    result_codes = sorted(list(codes))
+    print(f"Total codes found: {len(result_codes)}")
+    print(f"Found codes: {result_codes}")
+    return result_codes
 
 def extract_auflagen_with_text(pdf_path):
-    """Extrahiert Auflagen-Codes und deren zugehörige Texte aus der PDF"""
-    codes_with_text = {}
-    excluded_texts = [
-        "Technologiezentrum Typprüfstelle Lambsheim"
-    ]
-    
+    """Extrahiert Auflagen-Codes und zugehörige Texte aus dem PDF"""
+    result = {}
     try:
-        with open(pdf_path, 'rb') as file:
-            reader = PyPDF2.PdfReader(file)
-            
-            # Durchsuche jede Seite
-            for page in reader.pages:
-                text = page.extract_text()
-                if not text:
-                    continue
-                
-                # Teile Text in Zeilen
-                lines = text.split('\n')
-                current_code = None
-                current_text = []
-                
-                for line in lines:
-                    line = line.strip()
-                    
-                    # Überspringe ausgeschlossene Texte
-                    if any(excl in line for excl in excluded_texts):
-                        continue
-                    
-                    # Suche nach Auflagen-Codes
-                    code_match = re.match(r'^([A-Z][0-9]{1,3}[a-z]?|[0-9]{2,3})[\s\.:)](.+)', line)
-                    if code_match:
-                        # Speichere vorherigen Code wenn vorhanden
-                        if current_code and current_text:
-                            codes_with_text[current_code] = ' '.join(current_text)
-                        
-                        # Starte neuen Code
-                        current_code = code_match.group(1)
-                        current_text = [code_match.group(2).strip()]
-                    elif current_code and line:
-                        current_text.append(line)
-                
-                # Speichere letzten Code
-                if current_code and current_text:
-                    codes_with_text[current_code] = ' '.join(current_text)
-        
-        return codes_with_text
-        
-    except Exception as e:
-        print(f"Fehler beim Extrahieren der Auflagen-Texte: {str(e)}")
-        return {}
+        with pdfplumber.open(pdf_path) as pdf:
+            print("Extracting text from PDF...")
+            text = ''
+            for page_num, page in enumerate(pdf.pages):
+                page_text = page.extract_text()
+                text += page_text + '\n'
+                print(f"Page {page_num + 1} text length: {len(page_text)}")
 
-def save_to_database(codes_with_text):
-    """Speichert oder aktualisiert Auflagen-Codes und Texte in der Datenbank"""
-    try:
-        with app.app_context():
-            for code, description in codes_with_text.items():
-                # Prüfe, ob der Code bereits existiert
-                existing_code = AuflagenCode.query.filter_by(code=code).first()
-                
-                if existing_code:
-                    # Aktualisiere nur, wenn der Text sich geändert hat
-                    if existing_code.description != description:
-                        existing_code.description = description
-                        print(f"Aktualisiere Code {code} in der Datenbank")
-                else:
-                    # Füge neuen Code hinzu
-                    new_code = AuflagenCode(code=code, description=description)
-                    db.session.add(new_code)
-                    print(f"Füge neuen Code {code} zur Datenbank hinzu")
+            # Look for patterns like:
+            # A12, A 12, T89, T 89, NA1, K2b, etc. followed by text
+            print("Searching for codes and descriptions...")
             
-            db.session.commit()
-            print("Datenbank erfolgreich aktualisiert")
+            # Multiple regex patterns for different code formats
+            patterns = [
+                r'([A-Za-z]{1,2}\s?\d{1,3}[a-z]?)[:\s]+([^\.]+\.)',  # Standard format like A12: text
+                r'([A-Z]+\d[a-z])[:\s]+([^\.]+\.)',                   # Format like K2b: text
+                r'(\d{2,3})[:\s]+([^\.]+\.)'                         # Just numbers like 123: text
+            ]
+            
+            for pattern in patterns:
+                matches = re.finditer(pattern, text)
+                for match in matches:
+                    code = match.group(1).replace(' ', '')  # Remove spaces in code
+                    description = match.group(2).strip()
+                    print(f"Found code: {code} with description: {description}")
+                    result[code] = description
+
+            print(f"Total descriptions found: {len(result)}")
+            print("Found codes with descriptions:", result)
             
     except Exception as e:
-        print(f"Fehler beim Speichern in der Datenbank: {str(e)}")
-        db.session.rollback()
+        print(f"Error extracting Auflagen text: {e}")
+        print(traceback.format_exc())
+    return result
 
-def extract_auflagen_codes(tables):
-    codes = set()
-    code_pattern = re.compile(r"""
-        (?:
-            [A-Z][0-9]{1,3}[a-z]?|    # Bsp: A01, B123a
-            [0-9]{2,3}[A-Z]?|          # Bsp: 155, 12A
-            NoH|Lim                     # Spezielle Codes
-        )
-    """, re.VERBOSE)
-    
-    # Explizit erlaubte Spalten
-    allowed_columns = {
-        'reifenbezogene auflagen und hinweise',
-        'auflagen und hinweise',
-        'auflagen'
-    }
-
-    # Explizit ausgeschlossene Spalten
-    excluded_columns = {
-        'handelsbezeichnung',
-        'fahrzeug-typ',
-        'abe/ewg-nr',
-        'fahrzeugtyp',
-        'typ',
-        'abe',
-        'ewg-nr'
-    }
-
-    for table in tables:
-        # Konvertiere alle Werte zu Strings und normalisiere Spaltennamen
-        table_str = table.astype(str)
-        
-        # Normalisiere Spaltennamen (zu Kleinbuchstaben und ohne Sonderzeichen)
-        normalized_columns = {
-            col: col.strip().lower().replace('/', '').replace('-', '').replace(' ', '')
-            for col in table_str.columns
-        }
-
-        for original_col, normalized_col in normalized_columns.items():
-            # Überspringe explizit ausgeschlossene Spalten
-            if any(excl in normalized_col for excl in excluded_columns):
-                continue
-                
-            # Prüfe nur erlaubte Spalten
-            if any(allowed in normalized_col for allowed in allowed_columns):
-                for value in table_str[original_col]:
-                    matches = code_pattern.findall(str(value))
-                    codes.update(matches)
-    
-    # Extrahiere auch die Auflagen-Texte aus der PDF
-    if request.files['file'].filename is None:
-        return 'Invalid filename', 400
-    pdf_path = os.path.join(str(app.config['UPLOAD_FOLDER']), str(request.files['file'].filename))
-    extracted_texts = extract_auflagen_with_text(pdf_path)
-    print(f"Gefundene Auflagen-Texte: {len(extracted_texts)}")  # Debug-Ausgabe
-    for code, text in extracted_texts.items():
-        print(f"Code {code}: {text[:100]}...")  # Debug-Ausgabe
-    
-    # Modifizierte Logik für das Speichern der Codes mit Texten
-    with app.app_context():
-        existing_codes = set(code.code for code in AuflagenCode.query.all())
-        new_codes = codes - existing_codes
-        
-        for code in new_codes:
-            description = extracted_texts.get(code)  # Versuche zuerst den extrahierten Text
-            if not description:  # Falls nicht gefunden, verwende Standard-Text
-                description = AUFLAGEN_TEXTE.get(code, "Keine Beschreibung verfügbar")
-            
-            new_code = AuflagenCode(
-                code=code,
-                description=description
-            )
-            db.session.add(new_code)
-        db.session.commit()
-
-    # Kombiniere gefundene Codes mit ihren Texten
-    codes_with_text = {}
-    for code in codes:
-        description = extracted_texts.get(code, AUFLAGEN_TEXTE.get(code, "Keine Beschreibung verfügbar"))
-        codes_with_text[code] = description
-    
-    # Speichere in der Datenbank
-    save_to_database(codes_with_text)
-    
-    return sorted(list(codes))
+@app.route('/', methods=['GET'])
+def index():
+    if not check_java():
+        return "Fehler: Java muss installiert sein, um diese Anwendung zu nutzen.", 500
+    return render_template('index.html')
 
 @app.route('/extract', methods=['POST'])
 def extract():
@@ -523,7 +427,7 @@ def extract():
         cleanup_temp_files()  # Bereinige alte temporäre Dateien
         if not file.filename:
             return 'Invalid filename', 400
-        filename = secure_filename(file.filename)
+        filename = secure_filename(file.filename or "default_filename.pdf")
         pdf_path = os.path.join(app.config['UPLOAD_FOLDER'], filename)
         file.save(pdf_path)
         temp_storage.add_file(filename)  # Markiere PDF als aktiv
@@ -536,8 +440,11 @@ def extract():
         pdf_id = os.path.splitext(filename)[0]
         
         for i, table in enumerate(tables):
-            table = table.fillna('')
-            table = table.astype(str)
+            if isinstance(table, pd.DataFrame):
+                table = table.fillna('')
+                table = table.astype(str)
+            else:
+                table = pd.DataFrame() if table == '' else pd.DataFrame([table])
             
             # Generiere HTML-Vorschau
             table_htmls.append(convert_table_to_html(table))
@@ -561,34 +468,43 @@ def extract():
         
         # Extrahiere Auflagen-Codes und deren Texte
         auflagen_codes = extract_auflagen_codes(tables)
+        if auflagen_codes is None:
+            auflagen_codes = []
         extracted_texts = extract_auflagen_with_text(pdf_path)
         
         # Erstelle Liste von AuflagenCode-Objekten mit den extrahierten Texten
-        condition_codes = [
-            AuflagenCode(
-                code=code, 
-                description=str(extracted_texts.get(str(code))) if str(code) in extracted_texts else AUFLAGEN_TEXTE.get(str(code), "Keine Beschreibung verfügbar")
-            )
-            for code in auflagen_codes
-        ]
+        auflagen_codes = [
+    AuflagenCode(
+        code=str(code) if code is not None else None,
+        description=extracted_texts.get(str(code), "Keine Beschreibung verfügbar")
+    )
+    for code in auflagen_codes
+    if code is not None and not isinstance(code, int)
+]
         
         if not results:
-            return "Keine Tabellen in der PDF-Datei gefunden.", 400
+            return render_template('error.html', 
+                message="Keine Tabellen gefunden", 
+                details=[
+                    "Die PDF-Datei enthält keine erkennbaren Tabellen.",
+                    "Stellen Sie sicher, dass die PDF-Datei die erwarteten Tabellen enthält.",
+                    "Versuchen Sie, eine andere PDF-Datei hochzuladen."
+                ]
+            ), 400
             
         # Automatische Bereinigung nach 1 Stunde
-        def delayed_cleanup():
+        def delayed_cleanup(file_list, pdf_filename):
             import time
             time.sleep(3600)  # 1 Stunde warten
-            pdf_filename = pdf_path.split('/')[-1]  # Extract filename from path
-            for f in results + [pdf_filename]:
-                temp_storage.remove_file(f)
+            for fname in file_list + [pdf_filename]:
+                temp_storage.remove_file(fname)
         
-        threading.Thread(target=delayed_cleanup).start()
+        threading.Thread(target=delayed_cleanup, args=(results, filename)).start()
         
         return render_template('results.html', 
                             files=results, 
                             tables=table_htmls,
-                            condition_codes=condition_codes,
+                            auflagen_codes=auflagen_codes,
                             pdf_file=filename)
         
     except Exception as e:
@@ -640,6 +556,8 @@ def reprocess_file(filename):
         table_htmls = []
 
         for i, table in enumerate(tables):
+            if not isinstance(table, pd.DataFrame):
+                table = pd.DataFrame() if table == '' else pd.DataFrame([table])
             table = table.fillna('')
             table = table.astype(str)
             
@@ -665,7 +583,14 @@ def reprocess_file(filename):
             results.append(output_filename)
 
         if not results:
-            return "Keine Tabellen in der PDF-Datei gefunden.", 400
+            return render_template('error.html', 
+                message="Keine Tabellen gefunden", 
+                details=[
+                    "Die PDF-Datei enthält keine erkennbaren Tabellen.",
+                    "Vergewissern Sie sich, dass die PDF-Datei Tabellen enthält.",
+                    "Versuchen Sie es mit einer alternativen PDF-Datei."
+                ]
+            ), 400
 
         return render_template('results.html', files=results, tables=table_htmls)
 
@@ -788,10 +713,7 @@ def initialize_jvm():
     """Initialisiert die JVM mit Fehlerbehandlung"""
     try:
         if not jpype.isJVMStarted():
-            jvm_path = jpype.getDefaultJVMPath()
-            if not os.path.exists(jvm_path):
-                raise FileNotFoundError(f"JVM shared library file not found: {jvm_path}")
-            jpype.startJVM(jvm_path, convertStrings=False)  # Verhindert automatische String-Konvertierung
+            jpype.startJVM(convertStrings=False)  # Verhindert automatische String-Konvertierung
     except Exception as e:
         print(f"JVM Initialisierungsfehler: {str(e)}")
         print("Verwende Fallback-Methode...")
@@ -810,7 +732,7 @@ def shutdown_jvm():
 @app.before_request
 def before_request():
     if not jpype.isJVMStarted():
-        setup_jvm()
+        initialize_jvm()
 
 @app.teardown_appcontext
 def teardown_appcontext(exception=None):
@@ -821,58 +743,389 @@ def teardown_appcontext(exception=None):
 import atexit
 atexit.register(cleanup_temp_files)
 
+@app.route('/dashboard')
+def dashboard():
+    """Dashboard view with file management and code management"""
+    try:
+        files = os.listdir(app.config['UPLOAD_FOLDER'])
+        codes = AuflagenCode.query.all()
+        
+        # Pass helper functions to template
+        return render_template(
+            'dashboard.html',
+            files=files,
+            codes=codes,
+            get_file_size=get_file_size,
+            get_file_date=get_file_date
+        )
+    except Exception as e:
+        print(f"Dashboard error: {e}")
+        return render_template('error.html', 
+            message="Fehler beim Laden des Dashboards",
+            details=[str(e)]
+        ), 500
+
+def check_duplicate_codes():
+    """Überprüft und entfernt doppelte Auflagen-Codes und Codes ohne Beschreibung"""
+    try:
+        # Get all codes
+        all_codes = AuflagenCode.query.all()
+        
+        # Track duplicates and empty descriptions
+        code_dict = {}
+        duplicates = []
+        empty_descriptions = []
+        
+        for code_obj in all_codes:
+            # Stricter check for empty descriptions
+            if (code_obj.description is None or 
+                code_obj.description.strip() == "" or 
+                code_obj.description.strip() == "Keine Beschreibung verfügbar"):
+                print(f"Found code without description: {code_obj.code}")
+                empty_descriptions.append(code_obj)
+                continue
+                
+            # Check for duplicates
+            if code_obj.code in code_dict:
+                print(f"Found duplicate code: {code_obj.code}")
+                # Keep the one with description if available
+                existing_code = code_dict[code_obj.code]
+                if (not existing_code.description or 
+                    existing_code.description.strip() in ["", "Keine Beschreibung verfügbar"]):
+                    duplicates.append(existing_code)
+                    code_dict[code_obj.code] = code_obj
+                else:
+                    duplicates.append(code_obj)
+            else:
+                code_dict[code_obj.code] = code_obj
+        
+        # Remove duplicates and empty descriptions
+        total_removed = 0
+        
+        print(f"Found {len(duplicates)} duplicates and {len(empty_descriptions)} codes without description")
+        
+        # Remove empty descriptions first
+        for empty in empty_descriptions:
+            print(f"Removing code without description: {empty.code}")
+            db.session.delete(empty)
+            total_removed += 1
+            
+        # Then remove duplicates
+        for dup in duplicates:
+            print(f"Removing duplicate code: {dup.code}")
+            db.session.delete(dup)
+            total_removed += 1
+        
+        if total_removed > 0:
+            print(f"Committing changes, total removed: {total_removed}")
+            db.session.commit()
+            return {
+                'duplicates': len(duplicates),
+                'empty': len(empty_descriptions),
+                'total': total_removed
+            }
+            
+        print("No codes to remove")
+        return {'duplicates': 0, 'empty': 0, 'total': 0}
+        
+    except Exception as e:
+        print(f"Error checking codes: {e}")
+        import traceback
+        print(traceback.format_exc())
+        db.session.rollback()
+        return None
+
+@app.route('/check_duplicates', methods=['POST'])
+def check_duplicates():
+    """API endpoint to check and remove duplicate codes"""
+    try:
+        result = check_duplicate_codes()
+        if result is None:
+            return jsonify({
+                'status': 'error',
+                'message': 'Fehler beim Überprüfen der Codes'
+            }), 500
+            
+        if result['total'] > 0:
+            message = []
+            if result['duplicates'] > 0:
+                message.append(f"{result['duplicates']} doppelte Codes")
+            if result['empty'] > 0:
+                message.append(f"{result['empty']} Codes ohne Beschreibung")
+            
+            return jsonify({
+                'status': 'success',
+                'message': f"{' und '.join(message)} wurden entfernt",
+                'count': result['total']
+            })
+        else:
+            return jsonify({
+                'status': 'success',
+                'message': 'Keine problematischen Codes gefunden',
+                'count': 0
+            })
+    except Exception as e:
+        return jsonify({
+            'status': 'error',
+            'message': str(e)
+        }), 500
+
+@app.route('/save_code', methods=['POST'])
+def save_code():
+    """Speichert einen neuen Auflagen-Code"""
+    try:
+        data = request.get_json()
+        code = data.get('code', '').strip()
+        description = data.get('description', '').strip()
+        
+        if not code or not description:
+            return jsonify({
+                'status': 'error',
+                'message': 'Code und Beschreibung sind erforderlich'
+            }), 400
+            
+        # Check if code already exists
+        existing_code = AuflagenCode.query.filter_by(code=code).first()
+        if existing_code:
+            return jsonify({
+                'status': 'error',
+                'message': f'Code {code} existiert bereits'
+            }), 400
+            
+        # Create new code
+        new_code = AuflagenCode(code=code, description=description)
+        db.session.add(new_code)
+        db.session.commit()
+        
+        return jsonify({
+            'status': 'success',
+            'message': f'Code {code} wurde erfolgreich gespeichert'
+        })
+        
+    except Exception as e:
+        db.session.rollback()
+        print(f"Error saving code: {e}")
+        return jsonify({
+            'status': 'error',
+            'message': 'Fehler beim Speichern des Codes'
+        }), 500
+
+@app.route('/update_code', methods=['POST'])
+def update_code():
+    """Aktualisiert einen bestehenden Auflagen-Code"""
+    try:
+        data = request.get_json()
+        code = data.get('code', '').strip()
+        description = data.get('description', '').strip()
+        
+        if not code or not description:
+            return jsonify({
+                'status': 'error',
+                'message': 'Code und Beschreibung sind erforderlich'
+            }), 400
+            
+        # Find and update code
+        existing_code = AuflagenCode.query.filter_by(code=code).first()
+        if not existing_code:
+            return jsonify({
+                'status': 'error',
+                'message': f'Code {code} nicht gefunden'
+            }), 404
+            
+        existing_code.description = description
+        db.session.commit()
+        
+        return jsonify({
+            'status': 'success',
+            'message': f'Code {code} wurde aktualisiert'
+        })
+        
+    except Exception as e:
+        db.session.rollback()
+        print(f"Error updating code: {e}")
+        return jsonify({
+            'status': 'error',
+            'message': 'Fehler beim Aktualisieren des Codes'
+        }), 500
+
+@app.route('/delete_code', methods=['POST'])
+def delete_code():
+    """Löscht einen Auflagen-Code"""
+    try:
+        data = request.get_json()
+        code = data.get('code', '').strip()
+        
+        if not code:
+            return jsonify({
+                'status': 'error',
+                'message': 'Code ist erforderlich'
+            }), 400
+            
+        # Find and delete code
+        existing_code = AuflagenCode.query.filter_by(code=code).first()
+        if not existing_code:
+            return jsonify({
+                'status': 'error',
+                'message': f'Code {code} nicht gefunden'
+            }), 404
+            
+        db.session.delete(existing_code)
+        db.session.commit()
+        
+        return jsonify({
+            'status': 'success',
+            'message': f'Code {code} wurde gelöscht'
+        })
+        
+    except Exception as e:
+        db.session.rollback()
+        print(f"Error deleting code: {e}")
+        return jsonify({
+            'status': 'error',
+            'message': 'Fehler beim Löschen des Codes'
+        }), 500
+
+def get_file_size(filename):
+    """Returns formatted file size"""
+    try:
+        size = os.path.getsize(os.path.join(app.config['UPLOAD_FOLDER'], filename))
+        for unit in ['B', 'KB', 'MB', 'GB']:
+            if size < 1024:
+                return f"{size:.1f} {unit}"
+            size /= 1024
+    except:
+        return "N/A"
+
+def get_file_date(filename):
+    """Returns formatted file modification date"""
+    try:
+        timestamp = os.path.getmtime(os.path.join(app.config['UPLOAD_FOLDER'], filename))
+        return datetime.fromtimestamp(timestamp).strftime('%d.%m.%Y %H:%M')
+    except:
+        return "N/A"
+
+@app.route('/upload_file', methods=['POST'])
+def upload_file():
+    """Handle file upload"""
+    if 'file' not in request.files:
+        return jsonify({'status': 'error', 'message': 'Keine Datei ausgewählt'}), 400
+    
+    file = request.files['file']
+    if file.filename == '':
+        return jsonify({'status': 'error', 'message': 'Keine Datei ausgewählt'}), 400
+    
+    if file.filename and not file.filename.lower().endswith('.pdf'):
+        return jsonify({'status': 'error', 'message': 'Nur PDF-Dateien sind erlaubt'}), 400
+    
+    try:
+        filename = secure_filename(file.filename or "")
+        filepath = os.path.join(app.config['UPLOAD_FOLDER'], filename)
+        file.save(filepath)
+        return jsonify({'status': 'success', 'message': 'Datei erfolgreich hochgeladen'})
+    except Exception as e:
+        return jsonify({'status': 'error', 'message': str(e)}), 500
+
+@app.route('/rename_file', methods=['POST'])
+def rename_file():
+    """Handle file rename"""
+    try:
+        data = request.get_json()
+        old_name = secure_filename(data['old_name'])
+        new_name = secure_filename(data['new_name'])
+        
+        if not new_name.lower().endswith('.pdf'):
+            new_name += '.pdf'
+            
+        old_path = os.path.join(app.config['UPLOAD_FOLDER'], old_name)
+        new_path = os.path.join(app.config['UPLOAD_FOLDER'], new_name)
+        
+        if not os.path.exists(old_path):
+            return jsonify({'status': 'error', 'message': 'Datei nicht gefunden'}), 404
+            
+        if os.path.exists(new_path) and old_path != new_path:
+            return jsonify({'status': 'error', 'message': 'Zieldatei existiert bereits'}), 400
+            
+        os.rename(old_path, new_path)
+        return jsonify({'status': 'success'})
+    except Exception as e:
+        return jsonify({'status': 'error', 'message': str(e)}), 500
+
+@app.route('/delete_file', methods=['POST'])
+def delete_file():
+    """Handle file deletion"""
+    try:
+        data = request.get_json()
+        filename = secure_filename(data['filename'])
+        filepath = os.path.join(app.config['UPLOAD_FOLDER'], filename)
+        
+        if not os.path.exists(filepath):
+            return jsonify({'status': 'error', 'message': 'Datei nicht gefunden'}), 404
+            
+        os.unlink(filepath)
+        return jsonify({'status': 'success'})
+    except Exception as e:
+        return jsonify({'status': 'error', 'message': str(e)}), 500
+
+@app.route('/extract_tables/<filename>')
+def extract_tables(filename):
+    """Extract tables from existing PDF"""
+    filepath = os.path.join(app.config['UPLOAD_FOLDER'], secure_filename(filename))
+    if not os.path.exists(filepath):
+        return "Datei nicht gefunden", 404
+        
+    return redirect(url_for('extract', file=filename))
+
 def init_db():
     with app.app_context():
         db.create_all()
 
-# Verbesserte Thread-Handhabung
-def cleanup_on_shutdown():
-    """Führt sauberes Herunterfahren durch"""
-    try:
-        # Beende alle aktiven Threads
-        for thread in threading.enumerate():
-            if thread is not threading.current_thread():
-                try:
-                    thread.join(timeout=1.0)
-                except Exception as e:
-                    print(f"Fehler beim Beenden des Threads {thread.name}: {e}")
-        
-        # Bereinige Dateien
-        cleanup_temp_files()
-        
-        # Fahre JVM herunter
-        shutdown_jvm()
-        
-    except Exception as e:
-        print(f"Fehler beim Herunterfahren: {e}")
-
 if __name__ == '__main__':
+    print("Starting application...")
     try:
         # Initialize database
+        print("Initializing database...")
         init_db()
+        print("Database initialized successfully")
         
         # Verbesserte Entwicklungsumgebung-Konfiguration
         debug_mode = os.environ.get('FLASK_DEBUG', 'True').lower() == 'true'
-        port = int(os.environ.get('FLASK_PORT', '5000'))  # Füge Standard-Port 5000 hinzu
+        port = int(os.environ.get('FLASK_PORT', 5000))
+        print(f"Debug mode: {debug_mode}, Port: {port}")
+        
+        # Bereite die Liste der zu überwachenden Dateien vor
+        print("Setting up file monitoring...")
+        extra_files = []
+        if os.path.exists('./templates'):
+            extra_files.extend([os.path.join('./templates', f) for f in os.listdir('./templates')])
+        if os.path.exists('./static'):
+            extra_files.extend([os.path.join('./static', f) for f in os.listdir('./static')])
+        print(f"Monitoring extra files: {extra_files}")
         
         # Initialisiere JVM vor dem Start des Servers
-        setup_jvm()
+        print("Initializing JVM...")
+        initialize_jvm()
+        print("JVM initialized successfully")
         
         # Stelle sicher, dass der temporäre Ordner existiert und leer ist
+        print("Cleaning temporary files...")
         cleanup_temp_files()
+        print("Temporary files cleaned")
         
-        # Registriere Cleanup-Funktion
-        atexit.register(cleanup_on_shutdown)
-        
-        # Starte Flask-Server
+        print("Starting Flask server...")
         app.run(
             host='0.0.0.0',
             port=port,
-            debug=not debug_mode,
-            use_reloader=False
+            debug=debug_mode,
+            use_reloader=True,
+            reloader_type='stat',
+            extra_files=extra_files
         )
     except Exception as e:
-        print(f"Fehler beim Starten der Anwendung: {e}")
+        print(f"Error starting application: {str(e)}")
+        import traceback
+        print(traceback.format_exc())
+        raise
     finally:
-        cleanup_on_shutdown()
-
+        # Stelle sicher, dass die JVM beim Beenden heruntergefahren wird
+        print("Shutting down JVM...")
+        shutdown_jvm()

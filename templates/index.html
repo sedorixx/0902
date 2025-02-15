@@ -11,7 +11,19 @@
                 <form action="{{ url_for('extract') }}" method="post" enctype="multipart/form-data" id="uploadForm">
                     <div class="mb-3">
                         <label for="file" class="form-label">PDF-Datei auswählen</label>
-                        <input type="file" class="form-control" id="file" name="file" accept=".pdf" required>
+                        <input type="file" 
+                               class="form-control" 
+                               id="file" 
+                               name="file" 
+                               accept="application/pdf,.pdf" 
+                               required>
+                        <div class="form-text">
+                            <i class="fas fa-info-circle me-1"></i>
+                            Maximale Dateigröße: 50MB, nur PDF-Dateien erlaubt
+                        </div>
+                        <div class="invalid-feedback">
+                            Bitte wählen Sie eine gültige PDF-Datei aus
+                        </div>
                     </div>
                     <div class="mb-3">
                         <label for="format" class="form-label">Ausgabeformat</label>
@@ -38,10 +50,43 @@
 
 {% block scripts %}
 <script>
-document.getElementById('uploadForm').onsubmit = function() {
-    document.getElementById('progressBar').classList.remove('d-none');
-    document.getElementById('submitBtn').disabled = true;
-    document.getElementById('submitBtn').innerHTML = '<i class="fas fa-spinner fa-spin me-2"></i>Verarbeite...';
+document.getElementById('uploadForm').onsubmit = function(e) {
+    const fileInput = document.getElementById('file');
+    const file = fileInput.files[0];
+    const submitBtn = document.getElementById('submitBtn');
+    const progressBar = document.getElementById('progressBar');
+    
+    // Reset validation state
+    fileInput.classList.remove('is-invalid');
+    
+    if (!file) {
+        fileInput.classList.add('is-invalid');
+        e.preventDefault();
+        return false;
+    }
+    
+    // Check file type
+    if (!file.type || (file.type !== 'application/pdf' && !file.name.toLowerCase().endsWith('.pdf'))) {
+        fileInput.classList.add('is-invalid');
+        alert('Bitte wählen Sie eine gültige PDF-Datei aus.');
+        e.preventDefault();
+        return false;
+    }
+    
+    // Check file size
+    if (file.size > 50 * 1024 * 1024) {
+        fileInput.classList.add('is-invalid');
+        alert('Die Datei ist zu groß. Maximale Größe ist 50MB.');
+        e.preventDefault();
+        return false;
+    }
+    
+    // Show loading state
+    submitBtn.disabled = true;
+    submitBtn.innerHTML = '<i class="fas fa-spinner fa-spin me-2"></i>Verarbeite...';
+    progressBar.classList.remove('d-none');
+    
+    return true;
 };
 </script>
 {% endblock %}

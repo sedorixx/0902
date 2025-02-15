@@ -1,0 +1,130 @@
+<div class="card">
+    <div class="card-header d-flex justify-content-between align-items-center">
+        <h2><i class="fas fa-list-check me-2"></i>Auflagen-Code Verwaltung</h2>
+        <div>
+            <button class="btn btn-primary" data-bs-toggle="modal" data-bs-target="#newCodeModal">
+                <i class="fas fa-plus me-2"></i>Neuer Code
+            </button>
+            <button class="btn btn-warning ms-2" id="checkDuplicates" 
+                    data-bs-toggle="tooltip" 
+                    data-bs-placement="top" 
+                    title="Prüft auf doppelte Codes und Codes ohne Beschreibung">
+                <i class="fas fa-check-double me-2"></i>Duplikate prüfen
+            </button>
+        </div>
+    </div>
+    <div class="card-body">
+        <div class="mb-3">
+            <div class="input-group">
+                <span class="input-group-text"><i class="fas fa-search"></i></span>
+                <input type="text" class="form-control" id="codeSearch" placeholder="Code oder Beschreibung suchen...">
+            </div>
+        </div>
+
+        <div class="table-responsive">
+            <table class="table table-hover" id="codesTable">
+                <thead>
+                    <tr>
+                        <th style="width: 15%">Code</th>
+                        <th>Beschreibung</th>
+                        <th style="width: 100px">Aktionen</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for code in codes %}
+                    <tr>
+                        <td><span class="badge bg-primary">{{ code.code }}</span></td>
+                        <td>{{ code.description }}</td>
+                        <td>
+                            <div class="btn-group">
+                                <button class="btn btn-sm btn-warning edit-code" 
+                                        data-code="{{ code.code }}"
+                                        data-bs-toggle="tooltip"
+                                        data-bs-placement="top"
+                                        title="Code bearbeiten">
+                                    <i class="fas fa-edit"></i>
+                                </button>
+                                <button class="btn btn-sm btn-danger delete-code" 
+                                        data-code="{{ code.code }}"
+                                        data-bs-toggle="tooltip"
+                                        data-bs-placement="top"
+                                        title="Code löschen">
+                                    <i class="fas fa-trash"></i>
+                                </button>
+                            </div>
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>
+
+<!-- Rest of existing modals and script code -->
+
+<script>
+// Add this after existing script code
+$(document).ready(function() {
+    // Initialize DataTable with German language
+    $('#codesTable').DataTable({
+        language: {
+            url: '//cdn.datatables.net/plug-ins/1.10.24/i18n/German.json'
+        },
+        order: [[0, 'asc']],
+        pageLength: 15,
+        responsive: true
+    });
+
+    // Live search functionality
+    $('#codeSearch').on('keyup', function() {
+        const searchTerm = $(this).val().toLowerCase();
+        $('#codesTable tbody tr').each(function() {
+            const code = $(this).find('td:first').text().toLowerCase();
+            const description = $(this).find('td:nth-child(2)').text().toLowerCase();
+            if (code.includes(searchTerm) || description.includes(searchTerm)) {
+                $(this).show();
+            } else {
+                $(this).hide();
+            }
+        });
+    });
+});
+
+// Optional: Add animation when codes are edited/deleted
+function animateTableRow(row, type) {
+    const animation = type === 'delete' ? 'fadeOut' : 'fadeIn';
+    $(row).animate({
+        opacity: type === 'delete' ? 0 : 1
+    }, 400, function() {
+        if (type === 'delete') {
+            $(this).remove();
+        }
+    });
+}
+</script>
+
+<style>
+.badge {
+    font-size: 1em;
+    padding: 0.5em 0.7em;
+}
+.table th {
+    background-color: #f8f9fa;
+}
+.btn-group {
+    box-shadow: none;
+}
+.btn-group .btn {
+    margin: 0 1px;
+}
+#codesTable {
+    margin-bottom: 0;
+}
+.card-body {
+    padding: 1.5rem;
+}
+.table-responsive {
+    border-radius: 0.25rem;
+}
+</style>

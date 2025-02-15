@@ -66,38 +66,3 @@
     </div>
 </div>
 {% endblock %}
-
-{% block scripts %}
-<script>
-$(document).ready(function() {
-    // DataTable Initialisierung
-    $('#codesTable').DataTable();
-    
-    // Code speichern
-    $('#saveCode').click(function() {
-        const formData = new FormData($('#codeForm')[0]);
-        $.ajax({
-            url: '/manage_codes',
-            method: 'POST',
-            data: formData,
-            processData: false,
-            contentType: false,
-            success: function(response) {
-                if(response.status === 'success') {
-                    location.reload();
-                }
-            }
-        });
-    });
-    
-    // Code bearbeiten
-    $('.edit-code').click(function() {
-        const code = $(this).data('code');
-        const description = $(this).closest('tr').find('td:eq(1)').text();
-        $('#code').val(code);
-        $('#description').val(description);
-        $('#newCodeModal').modal('show');
-    });
-});
-</script>
-{% endblock %}

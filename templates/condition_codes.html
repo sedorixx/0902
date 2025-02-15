@@ -3,7 +3,11 @@
 {% block content %}
 <div class="card">
     <div class="card-header">
-        <h2><i class="fas fa-list-ul me-2"></i>Auflagencodes</h2>
+        {% if condition_codes %}
+            <h2><i class="fas fa-list-ul me-2"></i>Gefundene Auflagen Codes</h2>
+        {% else %}
+            <h2><i class="fas fa-list-ul me-2"></i>Keine Auflagen Codes gefunden</h2>
+        {% endif %}
     </div>
     <div class="card-body">
         {% if condition_codes %}
@@ -27,7 +31,7 @@
         </div>
         {% else %}
         <div class="alert alert-info">
-            <i class="fas fa-info-circle me-2"></i>Keine Auflagencodes gefunden
+            <i class="fas fa-info-circle me-2"></i>Keine Auflagen Codes gefunden
         </div>
         {% endif %}
     </div>
