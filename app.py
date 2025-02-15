@@ -5,7 +5,7 @@ import threading
 import tempfile
 import re  # Add this import
 import jpype
-import pdfplumber  # Am Anfang der Datei bei den anderen Imports
+import PyPDF2  # Ersetze pdfplumber import mit PyPDF2
 
 def install_package(package):
     """Installiert ein Python-Paket über pip"""
@@ -346,81 +346,53 @@ def extract_auflagen_with_text(pdf_path):
     """Extrahiert Auflagen-Codes und deren zugehörige Texte aus der PDF"""
     codes_with_text = {}
     excluded_texts = [
-        "Technologiezentrum Typprüfstelle Lambsheim - Königsberger Straße 20d - D-67245 Lambsheim",
+        "Technologiezentrum Typprüfstelle Lambsheim"
     ]
-    collect_text = True  # Flag für die Textsammlung
-    current_section = ""  # Buffer für den aktuellen Textabschnitt
-
+    
     try:
-        with app.app_context():
-            db_codes = {code.code: code.description for code in AuflagenCode.query.all()}
-        
-        with pdfplumber.open(pdf_path) as pdf:
-            for page in pdf.pages:
+        with open(pdf_path, 'rb') as file:
+            reader = PyPDF2.PdfReader(file)
+            
+            # Durchsuche jede Seite
+            for page in reader.pages:
                 text = page.extract_text()
                 if not text:
                     continue
-
+                
+                # Teile Text in Zeilen
                 lines = text.split('\n')
+                current_code = None
+                current_text = []
+                
                 for line in lines:
                     line = line.strip()
                     
-                    # Prüfe auf Ende der Auflagen
-                    if "Prüfort und Prüfdatum" in line:
-                        print("Extraktion beendet - 'Prüfort und Prüfdatum' gefunden")
-                        # Speichere letzten Abschnitt vor dem Beenden
-                        if current_section:
-                            code_match = re.match(r'^([A-Z][0-9]{1,3}[a-z]?|[0-9]{2,3})[\s\.:)](.+)', current_section)
-                            if code_match:
-                                code = code_match.group(1).strip()
-                                description = code_match.group(2).strip()
-                                if code in db_codes:
-                                    codes_with_text[code] = description
-                                    print(f"Letzter Code gespeichert: {code}")
-                        return codes_with_text  # Beende die Funktion sofort
+                    # Überspringe ausgeschlossene Texte
+                    if any(excl in line for excl in excluded_texts):
+                        continue
                     
-                    # Prüfe auf "Technologiezentrum"
-                    if "Technologiezentrum" in line:
-                        print("Technologie gefunden - Pausiere Extraktion")
-                        collect_text = False
-                        current_section = ""  # Verwerfe aktuellen Abschnitt
-                        continue
-
-                    # Prüfe auf neuen Auflagen-Code
-                    if re.match(r'^([A-Z][0-9]{1,3}[a-z]?|[0-9]{2,3})[\s\.:)]', line):
-                        print(f"Neuer Code gefunden: {line[:20]}...")
+                    # Suche nach Auflagen-Codes
+                    code_match = re.match(r'^([A-Z][0-9]{1,3}[a-z]?|[0-9]{2,3})[\s\.:)](.+)', line)
+                    if code_match:
+                        # Speichere vorherigen Code wenn vorhanden
+                        if current_code and current_text:
+                            codes_with_text[current_code] = ' '.join(current_text)
                         
-                        # Speichere vorherigen Abschnitt wenn vorhanden
-                        if collect_text and current_section:
-                            code_match = re.match(r'^([A-Z][0-9]{1,3}[a-z]?|[0-9]{2,3})[\s\.:)](.+)', current_section)
-                            if code_match:
-                                code = code_match.group(1).strip()
-                                description = code_match.group(2).strip()
-                                if code in db_codes:
-                                    codes_with_text[code] = description
-                                    print(f"Gespeichert: {code}")
-                        
-                        collect_text = True  # Setze Extraktion fort
-                        current_section = line  # Starte neuen Abschnitt
-                        continue
-
-                    # Sammle Text wenn aktiv
-                    if collect_text and current_section:
-                        current_section += " " + line
-
+                        # Starte neuen Code
+                        current_code = code_match.group(1)
+                        current_text = [code_match.group(2).strip()]
+                    elif current_code and line:
+                        current_text.append(line)
+                
+                # Speichere letzten Code
+                if current_code and current_text:
+                    codes_with_text[current_code] = ' '.join(current_text)
+        
+        return codes_with_text
+        
     except Exception as e:
         print(f"Fehler beim Extrahieren der Auflagen-Texte: {str(e)}")
-        import traceback
-        print(traceback.format_exc())
-    
-    # Bereinige die gesammelten Texte
-    for code, text in codes_with_text.items():
-        text = re.sub(r'\s+', ' ', text)  # Entferne mehrfache Leerzeichen
-        text = text.strip()
-        codes_with_text[code] = text
-        print(f"Finaler Code {code}: {text[:100]}...")
-
-    return codes_with_text
+        return {}
 
 def save_to_database(codes_with_text):
     """Speichert oder aktualisiert Auflagen-Codes und Texte in der Datenbank"""
