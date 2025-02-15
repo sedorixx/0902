@@ -3,47 +3,52 @@
 echo "PDF Table Extractor - Koyeb Build Script"
 echo "======================================"
 
-# Setze Arbeitsverzeichnis
-WORKDIR="/workspace"
-mkdir -p $WORKDIR
-cd $WORKDIR
+# Versuche root-Rechte zu erhalten
+if [ "$EUID" -ne 0 ]; then 
+    exec sudo "$0" "$@"
+fi
 
-# Setze Benutzerrechte
-export HOME=$WORKDIR
-chmod -R 755 $WORKDIR
-
-# System-Pakete installieren ohne apt cache
-rm -rf /var/lib/apt/lists/*
-apt-get clean
-apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y \
+# System-Pakete installieren
+export DEBIAN_FRONTEND=noninteractive
+apt-get update
+apt-get install -y software-properties-common
+add-apt-repository -y ppa:deadsnakes/ppa
+apt-get update
+apt-get install -y \
     python3.9 \
     python3.9-venv \
     python3.9-dev \
+    python3-pip \
     default-jre \
     build-essential \
-    curl \
-    && rm -rf /var/lib/apt/lists/*
+    curl
 
 # Python-Umgebung konfigurieren
 export PYTHONUNBUFFERED=1
 export PYTHONIOENCODING=utf-8
 export LC_ALL=C.UTF-8
 export LANG=C.UTF-8
-unset PYTHONPATH
-unset PYTHONHOME
 
-# Virtuelle Umgebung im Arbeitsverzeichnis erstellen
-python3.9 -m venv $WORKDIR/venv
-source $WORKDIR/venv/bin/activate
+# Arbeitsverzeichnis erstellen und Berechtigungen setzen
+mkdir -p /app
+chown -R www-data:www-data /app
+chmod -R 755 /app
+cd /app
 
-# Pip aktualisieren und Abhängigkeiten installieren
-$WORKDIR/venv/bin/pip install --no-cache-dir --upgrade pip setuptools wheel
-$WORKDIR/venv/bin/pip install --no-cache-dir -r requirements.txt
+# Virtuelle Umgebung erstellen
+python3.9 -m venv venv
+chown -R www-data:www-data venv
+chmod -R 755 venv
 
-# Anwendungsvariablen setzen
+# Als www-data-User ausführen
+su www-data << 'EOF'
+source venv/bin/activate
+pip install --no-cache-dir --upgrade pip setuptools wheel
+pip install --no-cache-dir -r requirements.txt
+
 export FLASK_APP=app.py
 export FLASK_ENV=production
 export PORT=${PORT:-8080}
 
-# Start der Anwendung
-exec $WORKDIR/venv/bin/gunicorn app:app --bind 0.0.0.0:$PORT --workers 4 --timeout 120
+exec venv/bin/gunicorn app:app --bind 0.0.0.0:$PORT --workers 4 --timeout 120
+EOF

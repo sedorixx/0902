@@ -1,15 +1,12 @@
 
+E: Could not open lock file /var/cache/apt/archives/lock - open (13: Permission denied)
+E: Unable to lock directory /var/cache/apt/archives/
 E: List directory /var/lib/apt/lists/partial is missing. - Acquire (13: Permission denied)
-update-alternatives: error: alternative path /usr/bin/python3.9 doesn't exist
-update-alternatives: error: no alternatives for python3
-The virtual environment was not created successfully because ensurepip is not
-available.  On Debian/Ubuntu systems, you need to install the python3-venv
-package using the following command.
-    apt install python3.10-venv
-You may need to use sudo with that command.  After installing the python3-venv
-package, recreate your virtual environment.
-Failing command: /app/venv/bin/python3
-./build.sh: line 29: /app/venv/bin/activate: No such file or directory
-./build.sh: line 32: /app/venv/bin/pip: No such file or directory
-./build.sh: line 35: /app/venv/bin/pip: No such file or directory
-/app/venv/bin/python: No module named gunicorn
+Reading package lists...
+E: List directory /var/lib/apt/lists/partial is missing. - Acquire (13: Permission denied)
+./build.sh: line 36: python3.9: command not found
+./build.sh: line 37: /workspace/venv/bin/activate: No such file or directory
+./build.sh: line 40: /workspace/venv/bin/pip: No such file or directory
+./build.sh: line 41: /workspace/venv/bin/pip: No such file or directory
+./build.sh: line 49: /workspace/venv/bin/gunicorn: No such file or directory
+Timer: Builder ran for 16.06593884s and ended at 2025-02-15T02:05:16Z
