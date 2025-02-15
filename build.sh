@@ -3,34 +3,29 @@
 echo "PDF Table Extractor - Koyeb Build Script"
 echo "======================================"
 
-# Setze Basis-Umgebungsvariablen
-export HOME=/workspace
+# Installiere grundlegende Unix-Tools
+apt-get update && apt-get install -y \
+    git \
+    sed \
+    coreutils \
+    build-essential \
+    python3.9 \
+    python3-pip \
+    default-jre \
+    curl
+
+# Setze Umgebungsvariablen
+export PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:$PATH"
 export PYTHONUNBUFFERED=1
 export LANG=C.UTF-8
 export LC_ALL=C.UTF-8
 
-# Erstelle Arbeitsverzeichnis mit korrekten Rechten
-mkdir -p $HOME/.local/bin
-export PATH="$HOME/.local/bin:$PATH"
+# Erstelle und aktiviere virtuelle Umgebung
+python3 -m venv venv
+. ./venv/bin/activate
 
-# Installiere Python ohne apt
-cd $HOME
-curl -O https://www.python.org/ftp/python/3.9.16/Python-3.9.16.tgz
-tar xzf Python-3.9.16.tgz
-cd Python-3.9.16
-./configure --enable-optimizations --prefix=$HOME/.local
-make -j4
-make install
-
-# Setze Python-Pfade
-export PATH="$HOME/.local/bin:$PATH"
-export PYTHONPATH="$HOME/.local/lib/python3.9/site-packages"
-
-# Installiere pip
-curl -sS https://bootstrap.pypa.io/get-pip.py | $HOME/.local/bin/python3
-
-# Installiere Requirements
-$HOME/.local/bin/pip3 install --user -r requirements.txt
+# Installiere Python-Abhängigkeiten
+pip install --no-cache-dir -r requirements.txt
 
 # Starte die Anwendung
-exec $HOME/.local/bin/python3 -m gunicorn app:app --bind 0.0.0.0:${PORT:-8080} --workers 4 --timeout 120
+exec python -m gunicorn app:app --bind 0.0.0.0:${PORT:-8080} --workers 4 --timeout 120

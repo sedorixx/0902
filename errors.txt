@@ -1,12 +1,6 @@
 
-Reading package lists...
-E: List directory /var/lib/apt/lists/partial is missing. - Acquire (13: Permission denied)
-sed: couldn't open temporary file /etc/sednICvWK: Permission denied
-update-locale: Unable to write /etc/default/locale: Permission denied
-./build.sh: line 33: python3.9: command not found
-curl: (23) Failure writing output to destination
-./build.sh: line 37: python3.9: command not found
-./build.sh: line 38: ./venv/bin/activate: No such file or directory
-./build.sh: line 41: pip: command not found
-./build.sh: line 42: pip: command not found
-./build.sh: line 48: /tmp/venv/bin/gunicorn: No such file or directory
+/usr/libexec/git-core/git-submodule: line 7: sed: not found
+/usr/libexec/git-core/git-submodule: /usr/libexec/git-core/git-sh-setup: line 77: sed: not found
+/usr/libexec/git-core/git-submodule: /usr/libexec/git-core/git-sh-setup: line 292: uname: not found
+/usr/libexec/git-core/git-submodule: line 677: sed: not found
+/usr/libexec/git-core/git-submodule: line 677: cmd_: not found
