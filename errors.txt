@@ -5,3 +5,4 @@ E: List directory /var/lib/apt/lists/partial is missing. - Acquire (13: Permissi
 ./build.sh: line 23: /app/venv/bin/pip: No such file or directory
 ./build.sh: line 24: /app/venv/bin/pip: No such file or directory
 ./build.sh: line 37: /app/venv/bin/python: No such file or directory
+/workspaces/0902/pdfplumber-0.11.5-py3-none-any.whl
