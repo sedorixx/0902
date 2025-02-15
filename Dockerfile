@@ -37,10 +37,9 @@ ENV UPLOAD_FOLDER=/app/uploads
 # Expose port
 EXPOSE 5000
 
-# Initialize database and create tables
-RUN flask db init && \
-    flask db migrate && \
-    flask db upgrade
+# Initialize database
+COPY migrations.py .
+RUN python migrations.py
 
 # Run the application
 CMD ["gunicorn", "--bind", "0.0.0.0:5000", "wsgi:app"]
