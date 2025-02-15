@@ -25,7 +25,6 @@ required_packages = {
     'tabula-py': 'tabula',
     'jpype1': 'jpype',
     'openpyxl': 'openpyxl',
-    'pdfplumber': 'pdfplumber',  # Neue Abhängigkeit
     'flask-sqlalchemy': 'flask_sqlalchemy'  # SQLAlchemy Abhängigkeit
 }
 
