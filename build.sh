@@ -3,40 +3,41 @@
 echo "PDF Table Extractor - Koyeb Build Script"
 echo "======================================"
 
-# Arbeitsverzeichnis erstellen und nutzen
-mkdir -p /app
-cd /app
-
-# Python-Umgebung konfigurieren
-export PYTHONUNBUFFERED=1
-export PYTHONIOENCODING=utf-8
-export LC_ALL=C.UTF-8
-export LANG=C.UTF-8
-
-# System-Dependencies installieren
-apt-get update
-apt-get install -y \
-    python3 \
+# Python-Basis installieren
+apt-get update && apt-get install -y \
+    python3.9 \
+    python3.9-dev \
+    python3.9-venv \
     python3-pip \
-    python3-venv \
     default-jre \
-    curl \
-    build-essential
+    build-essential \
+    curl
 
-# Erstelle virtuelle Umgebung im aktuellen Verzeichnis
-python3 -m venv venv
+# Setze Python 3.9 als Standard
+update-alternatives --install /usr/bin/python3 python3 /usr/bin/python3.9 1
+update-alternatives --set python3 /usr/bin/python3.9
 
-# Aktiviere virtuelle Umgebung
-. ./venv/bin/activate
+# Setze essentielle Umgebungsvariablen
+export LANG=C.UTF-8
+export LC_ALL=C.UTF-8
+export PYTHONIOENCODING=utf-8
+unset PYTHONPATH
+unset PYTHONHOME
 
-# Upgrade pip und installiere Abhängigkeiten
-python -m pip install --upgrade pip setuptools wheel
-pip install -r requirements.txt
+# Erstelle und aktiviere virtuelle Umgebung
+python3 -m venv --copies /app/venv
+. /app/venv/bin/activate
 
-# Setze Umgebungsvariablen
+# Installiere Basis-Pakete
+/app/venv/bin/pip install --no-cache-dir -U pip setuptools wheel
+
+# Installiere Projektabhängigkeiten
+/app/venv/bin/pip install --no-cache-dir -r requirements.txt
+
+# Setze weitere Umgebungsvariablen
 export FLASK_APP=app.py
 export FLASK_ENV=production
 export PORT=${PORT:-8080}
 
 # Starte die Anwendung
-exec python -m gunicorn app:app --bind 0.0.0.0:$PORT --workers 4 --timeout 120
+exec /app/venv/bin/python -m gunicorn app:app --bind 0.0.0.0:$PORT --workers 4 --timeout 120

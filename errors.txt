@@ -1,7 +1,6 @@
 
-E: List directory /var/lib/apt/lists/partial is missing. - Acquire (13: Permission denied)
-./build.sh: line 19: python3.9: command not found
-./build.sh: line 20: /app/venv/bin/activate: No such file or directory
-./build.sh: line 23: /app/venv/bin/pip: No such file or directory
-./build.sh: line 24: /app/venv/bin/pip: No such file or directory
-./build.sh: line 37: /app/venv/bin/python: No such file or directory
+Fatal Python error: init_fs_encoding: failed to get the Python codec of the filesystem encoding
+Python runtime state: core initialized
+ModuleNotFoundError: No module named 'encodings'
+Current thread 0x00007f8a5ca3a000 (most recent call first):
+  <no Python frame>
