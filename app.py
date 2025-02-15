@@ -7,6 +7,7 @@ import re # type: ignore
 import os
 from typing import Any, Dict, List, Optional, Set, Union # type: ignore
 from pathlib import Path
+from urllib.parse import urlparse
 
 # Try to import jpype and tabula with error handling
 tabula_available = False
@@ -51,11 +52,20 @@ class TempStorage:
 # Initialize Flask app and temp storage
 app = Flask(__name__)
 temp_storage = TempStorage()
+database_url = os.getenv('DATABASE_URL')
+
+# Update database configuration
+if database_url:
+    # Convert postgres:// to postgresql:// in database URL
+    database_url = database_url.replace('postgres://', 'postgresql://', 1)
+else:
+    database_url = 'sqlite:///auflagen.db'
+
 app.config.update(
     UPLOAD_FOLDER=tempfile.mkdtemp(),
     MAX_CONTENT_LENGTH=50 * 1024 * 1024,  # 50MB max-limit
     TEMPLATES_AUTO_RELOAD=True,
-    SQLALCHEMY_DATABASE_URI='sqlite:///auflagen.db',
+    SQLALCHEMY_DATABASE_URI=database_url,
     SQLALCHEMY_TRACK_MODIFICATIONS=False,
     UPLOAD_EXTENSIONS=['.pdf']
 )
@@ -119,7 +129,7 @@ app.config['MAX_CONTENT_LENGTH'] = 16 * 1024 * 1024  # 16MB max-limit
 # Neue Konfigurationsoptionen für besseres Neuladen
 app.config['TEMPLATES_AUTO_RELOAD'] = True
 app.jinja_env.auto_reload = True
-app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///auflagen.db'
+app.config['SQLALCHEMY_DATABASE_URI'] = database_url
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 
 # Initialize the db with the Flask app
@@ -1078,6 +1088,7 @@ def extract_tables(filename):
 def init_db():
     with app.app_context():
         db.create_all()
+        print("Database tables created successfully")
 
 if __name__ == '__main__':
     print("Starting application...")

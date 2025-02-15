@@ -1,0 +1,26 @@
+name: pdf-extractor
+service:
+  name: web
+  ports:
+    - port: 5000
+      protocol: http
+  env:
+    - name: FLASK_APP
+      value: app.py
+    - name: FLASK_ENV
+      value: production
+    - name: FLASK_DEBUG
+      value: "0"
+    - name: DATABASE_URL
+      value: "{{ services.database.url }}"
+  routes:
+    - path: /
+      port: 5000
+  instance_types:
+    - name: free
+  build:
+    dockerfile: Dockerfile
+addons:
+  - name: database
+    type: postgresql
+    plan: free
