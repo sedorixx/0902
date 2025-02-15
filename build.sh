@@ -3,35 +3,40 @@
 echo "PDF Table Extractor - Koyeb Build Script"
 echo "======================================"
 
+# Arbeitsverzeichnis erstellen und nutzen
+mkdir -p /app
+cd /app
+
 # Python-Umgebung konfigurieren
 export PYTHONUNBUFFERED=1
-unset PYTHONPATH
-unset PYTHONHOME
+export PYTHONIOENCODING=utf-8
+export LC_ALL=C.UTF-8
+export LANG=C.UTF-8
 
-# System-Python installieren
-apt-get update && apt-get install -y \
-    python3.9 \
-    python3.9-venv \
-    python3.9-dev \
-    python3-pip
+# System-Dependencies installieren
+apt-get update
+apt-get install -y \
+    python3 \
+    python3-pip \
+    python3-venv \
+    default-jre \
+    curl \
+    build-essential
 
-# Erstelle und aktiviere virtuelle Umgebung
-python3.9 -m venv /app/venv
-. /app/venv/bin/activate
+# Erstelle virtuelle Umgebung im aktuellen Verzeichnis
+python3 -m venv venv
 
-# Installiere pip Abhängigkeiten
-/app/venv/bin/pip install --upgrade pip setuptools wheel
-/app/venv/bin/pip install -r requirements.txt
+# Aktiviere virtuelle Umgebung
+. ./venv/bin/activate
+
+# Upgrade pip und installiere Abhängigkeiten
+python -m pip install --upgrade pip setuptools wheel
+pip install -r requirements.txt
 
 # Setze Umgebungsvariablen
 export FLASK_APP=app.py
 export FLASK_ENV=production
 export PORT=${PORT:-8080}
-export PYTHONIOENCODING=utf-8
-export LC_ALL=C.UTF-8
-export LANG=C.UTF-8
-export PYTHONPATH=/app
-export PATH="/app/venv/bin:$PATH"
 
 # Starte die Anwendung
-exec /app/venv/bin/python -m gunicorn app:app --bind 0.0.0.0:$PORT --workers 4 --timeout 120
+exec python -m gunicorn app:app --bind 0.0.0.0:$PORT --workers 4 --timeout 120
