@@ -15,7 +15,7 @@ apt-get update && apt-get install -y \
     curl
 
 # Setze Umgebungsvariablen
-export PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:$PATH"
+export PATH="HOME/.local/bin:$PATH"
 export PYTHONUNBUFFERED=1
 export LANG=C.UTF-8
 export LC_ALL=C.UTF-8
