@@ -338,80 +338,131 @@ def extract_auflagen_codes(tables):
         'auflagen und hinweise'
     ]
 
-    print("Starting Auflagen code extraction...")
+    print("Starting Auflagen code extraction from tables...")
     for i, df in enumerate(tables):
         if not isinstance(df, pd.DataFrame):
             continue
 
         print(f"\nProcessing table {i+1}")
-        # Clean column names by removing \r and \n and normalizing whitespace
+        # Normalisiere Spaltennamen
         df.columns = [str(col).lower().replace('\r', ' ').replace('\n', ' ').strip() for col in df.columns]
         print(f"Normalized columns: {df.columns.tolist()}")
 
-        # Check each column
+        # Prüfe jede Spalte
         for col in df.columns:
-            cleaned_col = ' '.join(col.split())  # Normalize whitespace
+            cleaned_col = ' '.join(col.split())  # Normalisiere Leerzeichen
             if any(target in cleaned_col for target in target_columns):
                 print(f"Found matching column: {col}")
                 cell_values = df[col].astype(str)
 
-                # Process each cell
+                # Verarbeite jede Zelle
                 for cell in cell_values:
                     cell = str(cell).strip()
                     if not cell:
                         continue
                         
                     print(f"Processing cell value: {cell}")
-                    # First try to find codes with explicit spacing
-                    matches = re.finditer(r'(?:^|\s)([A-Za-z]{1,2}\d{1,3}|[A-Z]+\d[a-z]?)(?:\s|$)', cell)
+                    # Suche nach Codes im bekannten Format
+                    matches = re.finditer(r'(?:^|\s)([A-Za-z]{1,2}\d{1,3}[a-z]?)(?:\s|$)', cell)
                     for match in matches:
                         code = match.group(1).strip()
-                        print(f"Found code: {code}")
+                        print(f"Found code in table: {code}")
                         codes.add(code)
 
     result_codes = sorted(list(codes))
-    print(f"Total codes found: {len(result_codes)}")
+    print(f"Total codes found in tables: {len(result_codes)}")
     print(f"Found codes: {result_codes}")
     return result_codes
 
-def extract_auflagen_with_text(pdf_path):
+def extract_descriptions_from_text(text: str, known_codes: List[str]) -> Dict[str, str]:
+    """Extrahiert Beschreibungen basierend auf bekannten Codes"""
+    descriptions = {}
+    
+    # Normalisiere Zeilenumbrüche und entferne übermäßige Leerzeichen
+    text = re.sub(r'\r\n|\r|\n', '\n', text)
+    text = re.sub(r'\n\s*\n', '\n\n', text)  # Standardisiere leere Zeilen
+    
+    # Teile den Text in einzelne Einträge auf
+    # Suche nach Mustern wie "X99" am Anfang einer Zeile oder nach Zeilenumbruch
+    code_pattern = r'(?:^|\n)([A-Z]{1,2}\d{1,3}[a-z]?)[\s:.-]+([^\n]+(?:\n(?![A-Z]{1,2}\d{1,3}[a-z]?\s)[^\n]+)*)'
+    matches = re.finditer(code_pattern, text, re.MULTILINE)
+    
+    for match in matches:
+        code = match.group(1).strip()
+        if code not in known_codes:
+            continue
+            
+        description = match.group(2)
+        
+        # Bereinige die Beschreibung
+        description = re.sub(r'\s+', ' ', description)
+        description = description.strip()
+        
+        # Entferne andere Codes
+        for other_code in known_codes:
+            description = description.replace(other_code, '')
+        
+        # Entferne technische Daten und Formatierungen
+        description = re.sub(r'\d{2,3}-\d{2,3}', '', description)
+        description = re.sub(r'\d{3}/\d{2}R\d{2}', '', description)
+        description = re.sub(r'e\d\*[\d*]+', '', description)
+        
+        # Finale Bereinigung
+        description = re.sub(r'\s+', ' ', description).strip()
+        
+        # Füge Punkt am Ende hinzu falls nicht vorhanden
+        if description and not description[-1] in '.!?':
+            description += '.'
+            
+        if len(description) > 10:
+            print(f"Gefundene Beschreibung für {code}: {description}")
+            descriptions[code] = description
+
+    return descriptions
+
+def extract_auflagen_with_text(pdf_path, known_codes: List[str]):
     """Extrahiert Auflagen-Codes und zugehörige Texte aus dem PDF"""
-    result = {}
     try:
         with pdfplumber.open(pdf_path) as pdf:
             print("Extracting text from PDF...")
-            text = ''
+            pdf_text = ''
+            
+            # Extrahiere Text seitenweise und behalte Formatierung bei
             for page_num, page in enumerate(pdf.pages):
-                page_text = page.extract_text()
-                text += page_text + '\n'
-                print(f"Page {page_num + 1} text length: {len(page_text)}")
-
-            # Look for patterns like:
-            # A12, A 12, T89, T 89, NA1, K2b, etc. followed by text
-            print("Searching for codes and descriptions...")
+                page_text = page.extract_text(x_tolerance=1, y_tolerance=3)
+                if not page_text:
+                    continue
+                    
+                # Füge Zeilenumbrüche für bessere Strukturierung hinzu
+                page_text = re.sub(r'([.!?])\s*(\w)', r'\1\n\2', page_text)
+                pdf_text += page_text + '\n\n'
+                print(f"Page {page_num + 1} text extracted")
             
-            # Multiple regex patterns for different code formats
-            patterns = [
-                r'([A-Za-z]{1,2}\s?\d{1,3}[a-z]?)[:\s]+([^\.]+\.)',  # Standard format like A12: text
-                r'([A-Z]+\d[a-z])[:\s]+([^\.]+\.)',                   # Format like K2b: text
-                r'(\d{2,3})[:\s]+([^\.]+\.)'                         # Just numbers like 123: text
-            ]
+            # Suche nach Beschreibungen im gesamten Text
+            descriptions = extract_descriptions_from_text(pdf_text, known_codes)
             
-            for pattern in patterns:
-                matches = re.finditer(pattern, text)
-                for match in matches:
-                    code = match.group(1).replace(' ', '')  # Remove spaces in code
-                    description = match.group(2).strip()
-                    print(f"Found code: {code} with description: {description}")
-                    result[code] = description
-
-            print(f"Total descriptions found: {len(result)}")
-            print("Found codes with descriptions:", result)
+            # Erstelle das finale Ergebnis-Dictionary
+            result = {}
+            for code in known_codes:
+                description = descriptions.get(code, "")
+                if description:
+                    description = re.sub(r'\s+', ' ', description).strip()
+                    if not description[-1] in '.!?':
+                        description += '.'
+                else:
+                    description = "Keine Beschreibung verfügbar"
+                    
+                result[code] = description
+                print(f"\nFinaler Eintrag für {code}:")
+                print(f"Beschreibung: {result[code]}")
+            
+            return result
             
     except Exception as e:
         print(f"Error extracting Auflagen text: {e}")
+        import traceback
         print(traceback.format_exc())
-    return result
+        return {}
 
 @app.route('/', methods=['GET'])
 def index():
@@ -476,21 +527,25 @@ def extract():
             temp_storage.add_file(output_filename)  # Markiere Tabelle als aktiv
             results.append(output_filename)
         
-        # Extrahiere Auflagen-Codes und deren Texte
-        auflagen_codes = extract_auflagen_codes(tables)
-        if auflagen_codes is None:
-            auflagen_codes = []
-        extracted_texts = extract_auflagen_with_text(pdf_path)
+        # Extrahiere zuerst die Codes aus den Tabellen
+        tables_codes = extract_auflagen_codes(tables)
+        if not tables_codes:
+            tables_codes = []
+            
+        print(f"Found {len(tables_codes)} codes in tables")
         
-        # Erstelle Liste von AuflagenCode-Objekten mit den extrahierten Texten
+        # Verwende diese Codes, um die Beschreibungen zu finden
+        pdf_results = extract_auflagen_with_text(pdf_path, tables_codes)
+        
+        # Erstelle Liste von AuflagenCode-Objekten
         auflagen_codes = [
-    AuflagenCode(
-        code=str(code) if code is not None else None,
-        description=extracted_texts.get(str(code), "Keine Beschreibung verfügbar")
-    )
-    for code in auflagen_codes
-    if code is not None and not isinstance(code, int)
-]
+            AuflagenCode(
+                code=str(code),
+                description=pdf_results.get(str(code), "Keine Beschreibung verfügbar")
+            )
+            for code in tables_codes
+            if code is not None
+        ]
         
         if not results:
             return render_template('error.html', 
