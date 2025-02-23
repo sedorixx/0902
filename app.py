@@ -37,6 +37,7 @@ from werkzeug.utils import secure_filename # type: ignore
 from extensions import db
 from models import AuflagenCode # type: ignore
 from datetime import datetime
+import json
 
 class TempStorage:
     def __init__(self):
@@ -470,6 +471,56 @@ def index():
         return "Fehler: Java muss installiert sein, um diese Anwendung zu nutzen.", 500
     return render_template('index.html')
 
+def save_extracted_data(tables: List[pd.DataFrame], auflagen_codes: List[AuflagenCode], pdf_name: str):
+    """Speichert extrahierte Daten in maschinenlesbarem Format"""
+    # Erstelle Basisordner mit Zeitstempel
+    timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+    base_name = pdf_name.replace('.pdf', '')  # Entferne .pdf Extension
+    base_dir = os.path.join('/workspaces/0902/extracted_data', base_name)
+    
+    # Füge Zeitstempel nur hinzu, wenn Verzeichnis bereits existiert
+    if os.path.exists(base_dir):
+        base_dir = f"{base_dir}_{timestamp}"
+    
+    os.makedirs(base_dir, exist_ok=True)
+
+    # Speichere Tabellen als CSV
+    tables_dir = os.path.join(base_dir, 'tables')
+    os.makedirs(tables_dir, exist_ok=True)
+    for i, table in enumerate(tables):
+        if isinstance(table, pd.DataFrame):
+            # Behalte originalen PDF-Namen bei, füge nur Tabellennummer hinzu
+            filename = f"{base_name}_tabelle_{i+1}.csv"
+            filepath = os.path.join(tables_dir, filename)
+            table.to_csv(filepath, index=False, encoding='utf-8-sig', sep=';')
+
+    # Speichere Auflagen als JSON mit originalem Namen
+    auflagen_data = {
+        'pdf_name': pdf_name,
+        'extraction_date': timestamp,
+        'codes': [
+            {
+                'code': code.code,
+                'description': code.description
+            }
+            for code in auflagen_codes
+        ]
+    }
+    
+    auflagen_file = os.path.join(base_dir, f"{base_name}_auflagen.json")
+    with open(auflagen_file, 'w', encoding='utf-8') as f:
+        json.dump(auflagen_data, f, ensure_ascii=False, indent=2)
+
+    # CSV-Version der Auflagen mit originalem Namen
+    auflagen_df = pd.DataFrame([
+        {'code': code.code, 'description': code.description}
+        for code in auflagen_codes
+    ])
+    auflagen_csv = os.path.join(base_dir, f"{base_name}_auflagen.csv")
+    auflagen_df.to_csv(auflagen_csv, index=False, encoding='utf-8-sig', sep=';')
+
+    return base_dir
+
 @app.route('/extract', methods=['POST'])
 def extract():
     if not check_java():
@@ -566,11 +617,25 @@ def extract():
         
         threading.Thread(target=delayed_cleanup, args=(results, filename)).start()
         
+        # Speichere extrahierte Daten
+        pdf_name = os.path.splitext(filename)[0]
+        
+        # Ensure tables is a list of DataFrames
+        validated_tables = []
+        if isinstance(tables, list):
+            for table in tables:
+                if isinstance(table, pd.DataFrame):
+                    validated_tables.append(table)
+        
+        extracted_dir = save_extracted_data(validated_tables, auflagen_codes, pdf_name)
+        print(f"Extracted data saved to: {extracted_dir}")
+        
         return render_template('results.html', 
                             files=results, 
                             tables=table_htmls,
                             auflagen_codes=auflagen_codes,
-                            pdf_file=filename)
+                            pdf_file=filename,
+                            extracted_dir=extracted_dir)
         
     except Exception as e:
         import traceback
@@ -1140,6 +1205,9 @@ def extract_tables(filename):
         
     return redirect(url_for('extract', file=filename))
 
+async def process_pdf(self, pdf_path: Union[str, Path]) -> Dict:
+    pass
+
 def init_db():
     with app.app_context():
         db.create_all()
@@ -1195,3 +1263,4 @@ if __name__ == '__main__':
         # Stelle sicher, dass die JVM beim Beenden heruntergefahren wird
         print("Shutting down JVM...")
         shutdown_jvm()
+

@@ -1,0 +1,7 @@
+
+# Use a HF token from https://hf.co/settings/tokens as password
+docker login registry.hf.space
+docker run -it -p 7860:7860 --platform=linux/amd64 \
+	-e HUGGINGFACE_TOKEN="" \
+	-e PAUSE_ON_FAILURE="1" \
+	registry.hf.space/sedorix-gutachtenanalyse:latest 

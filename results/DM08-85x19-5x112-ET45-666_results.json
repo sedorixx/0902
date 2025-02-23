@@ -1,0 +1,20 @@
+{
+  "status": "success",
+  "data": {
+    "fahrzeuge": [],
+    "reifen": [],
+    "auflagen": []
+  },
+  "validation": {
+    "valid": true
+  },
+  "training": {
+    "status": "success",
+    "metrics": {},
+    "timestamp": "2025-02-22T22:17:38.210677"
+  },
+  "export": {
+    "exported_files": [],
+    "status": "success"
+  }
+}
