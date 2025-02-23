@@ -1,21 +1,23 @@
 from pathlib import Path
 
-BASE_DIR = Path('/workspaces/0902')
-TRAINING_DATA_DIR = Path("/workspaces/0902/training_data")
-MODELS_DIR = Path("/workspaces/0902/models")
-REPROCESS_DIR = Path("/workspaces/0902/reprocess")
+# Basis-Verzeichnis (der aktuelle Projektordner)
+BASE_DIR = Path(__file__).parent.parent
+
+# Trainings-Verzeichnisse
+TRAINING_DATA_DIR = BASE_DIR / 'training_data'
+MODELS_DIR = BASE_DIR / 'models'
+REPROCESS_DIR = BASE_DIR / 'reprocess'
 EXPORT_DIR = BASE_DIR / 'exported_data'
 
-# Stellen Sie sicher, dass alle notwendigen Verzeichnisse existieren
-TRAINING_DATA_DIR.mkdir(exist_ok=True)
-MODELS_DIR.mkdir(exist_ok=True)
-REPROCESS_DIR.mkdir(exist_ok=True)
-EXPORT_DIR.mkdir(exist_ok=True)
+# Erstelle die Verzeichnisse
+for dir_path in [TRAINING_DATA_DIR, MODELS_DIR, REPROCESS_DIR, EXPORT_DIR]:
+    dir_path.mkdir(parents=True, exist_ok=True)
 
-# Training Konfiguration
+# Trainings-Konfiguration
 TRAINING_CONFIG = {
     'batch_size': 32,
-    'epochs': 5,
+    'epochs': 10,
+    'validation_split': 0.2,
     'learning_rate': 3e-5,
     'max_seq_length': 512,
     'model_name': 'bert-base-german-cased'

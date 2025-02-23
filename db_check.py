@@ -1,5 +1,5 @@
 from app import app, db
-from models import AuflagenCode
+from app.models import AuflagenCode
 
 def check_database_connection():
     try:

@@ -1,6 +1,7 @@
 from pathlib import Path
 from transformers import AutoModelForSequenceClassification, AutoTokenizer
 from .config import MODELS_DIR, TRAINING_CONFIG
+from app import db
 
 class BaseClassifier:
     def __init__(self, model_name: str, num_labels: int):
@@ -28,3 +29,7 @@ class AuflagenClassifier(BaseClassifier):
 class TableClassifier(BaseClassifier):
     def __init__(self):
         super().__init__(str(TRAINING_CONFIG['model_name']), num_labels=2)  # Binary classification
+
+class AuflagenCode(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    code = db.Column(db.String(50), unique=True, nullable=False)
