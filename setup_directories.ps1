@@ -16,16 +16,22 @@ Remove-Item -Recurse -Force venv -ErrorAction SilentlyContinue
 & $pythonExe -m venv venv
 .\venv\Scripts\Activate
 
+# Erweiterte Verzeichnisstruktur
 $directories = @(
     "training_data",
     "models",
     "reprocess",
-    "training/models"
+    "training/models",
+    "exported_data",
+    "training/data",
+    "training/utils",
+    "training/config"
 )
 
 foreach ($dir in $directories) {
-    New-Item -ItemType Directory -Path $dir -Force
-    Write-Host "Created directory: $dir"
+    $fullPath = Join-Path $PWD $dir
+    New-Item -ItemType Directory -Path $fullPath -Force
+    Write-Host "Created directory: $fullPath"
 }
 
 # Basis-Setup mit korrektem Python-Pfad
