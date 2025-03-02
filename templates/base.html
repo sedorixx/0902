@@ -20,6 +20,13 @@
         .btn:hover { transform: translateY(-1px); box-shadow: 0 2px 4px rgba(0,0,0,.1); }
         .loading-overlay { position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(255,255,255,0.8); display: none; justify-content: center; align-items: center; z-index: 9999; }
         .tooltip-inner { max-width: 200px; padding: 8px; background-color: #333; }
+        
+        /* Neue Stile für KI-Analyse */
+        .bg-success-light { background-color: rgba(25, 135, 84, 0.15); }
+        .bg-warning-light { background-color: rgba(255, 193, 7, 0.15); }
+        .bg-info-light { background-color: rgba(13, 110, 253, 0.15); }
+        .analysis-summary { border-radius: 8px; }
+        
         @media (max-width: 768px) {
             .table-responsive { margin: 0 -15px; }
             .card { margin: 0.5rem 0; }
@@ -77,10 +84,12 @@
     <script src="https://cdn.datatables.net/1.11.5/js/jquery.dataTables.min.js"></script>
     <script src="https://cdn.datatables.net/1.11.5/js/dataTables.bootstrap5.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/toastr@2.1.4/build/toastr.min.js"></script>
+    <!-- Debug-Skript hinzufügen -->
+    <script src="{{ url_for('static', filename='js/debug.js') }}"></script>
     <script>
         // Globale Hilfsfunktionen
         window.showLoading = function() {
-            $('.loading-overlay').fadeIn();
+            $('.loading-overlay').css('display', 'flex');
         };
         
         window.hideLoading = function() {

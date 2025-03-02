@@ -10,7 +10,37 @@
             <button type="button" class="btn btn-sm btn-outline-secondary" id="toggleAll">
                 <i class="fas fa-eye me-1"></i>Alle Ein/Aus
             </button>
+            <!-- Debug-Info und korrigierter KI-Analyse Button -->
+            <a href="{{ url_for('analyze_registration_freedom', filename=pdf_file) }}" 
+               class="btn btn-sm btn-outline-primary" id="analyzeBtn">
+                <i class="fas fa-robot me-1"></i>KI-Analyse ({{ pdf_file }})
+            </a>
         </div>
+    </div>
+
+    <!-- Nach dem Card-Header, füge Debug-Button hinzu -->
+    <!-- Verbesserte Debug-Info mit mehr Details -->
+    <div class="alert alert-info" id="debugInfo">
+        <div class="d-flex justify-content-between align-items-center mb-2">
+            <h5 class="mb-0"><i class="fas fa-bug me-2"></i>Debug-Informationen</h5>
+            <button class="btn btn-sm btn-outline-secondary" id="refreshDebug">
+                <i class="fas fa-sync-alt"></i>
+            </button>
+        </div>
+        <p><strong>PDF-Datei:</strong> {{ pdf_file }}</p>
+        <p><strong>Tabellen:</strong> {{ files|length }}</p>
+        <p><strong>Auflagencodes:</strong> {{ condition_codes|length if condition_codes else 0 }}</p>
+        
+        <div class="mt-3">
+            <h6>Test-Funktionen:</h6>
+            <div class="btn-group">
+                <button class="btn btn-sm btn-secondary" id="testAnalysisBtn">Test Analyse-Route</button>
+                <button class="btn btn-sm btn-info" id="testDirectUrl">Direkter Link</button>
+                <button class="btn btn-sm btn-warning" id="showAllRoutes">Alle Routen</button>
+            </div>
+        </div>
+        
+        <div class="mt-3" id="debugResults"></div>
     </div>
     
     <!-- Nach dem Card-Header und vor dem Card-Body -->
@@ -373,6 +403,134 @@ $(document).ready(function() {
             destroy: true
         });
     });
+
+    // Füge Event-Handler für KI-Analyse-Button hinzu
+    $('a[href*="analyze"]').on('click', function() {
+        showLoading();
+    });
+    
+    // KI-Analyse Button Ladeindikator hinzufügen
+    $('#analyzeBtn').on('click', function() {
+        showLoading();
+    });
+
+    // Verbesserte Debug-Funktionalität
+    $('#testAnalysisBtn').on('click', function() {
+        const pdfFile = '{{ pdf_file }}';
+        showLoading();
+        
+        // Teste den Analyse-Endpunkt direkt
+        $.ajax({
+            url: '/analyze/' + pdfFile,
+            method: 'GET',
+            success: function(response) {
+                hideLoading();
+                // Falls die Response HTML ist, zeige sie an
+                const htmlContent = $('<div>').html(response);
+                $('body').append(
+                    $('<div>')
+                        .addClass('modal fade')
+                        .attr('id', 'responseModal')
+                        .append(
+                            $('<div>')
+                                .addClass('modal-dialog modal-xl')
+                                .append(
+                                    $('<div>')
+                                        .addClass('modal-content')
+                                        .append(
+                                            $('<div>')
+                                                .addClass('modal-header')
+                                                .append(
+                                                    $('<h5>').addClass('modal-title').text('Analyse-Antwort'),
+                                                    $('<button>').attr('type', 'button').addClass('btn-close').attr('data-bs-dismiss', 'modal')
+                                                )
+                                        )
+                                        .append(
+                                            $('<div>')
+                                                .addClass('modal-body')
+                                                .append(htmlContent)
+                                        )
+                                )
+                        )
+                );
+                
+                const responseModal = new bootstrap.Modal(document.getElementById('responseModal'));
+                responseModal.show();
+                
+            },
+            error: function(xhr, status, error) {
+                hideLoading();
+                toastr.error('Fehler bei der Anfrage: ' + error);
+                console.error(xhr.responseText);
+                
+                $('body').append(
+                    $('<div>')
+                        .addClass('modal fade')
+                        .attr('id', 'errorModal')
+                        .append(
+                            $('<div>')
+                                .addClass('modal-dialog')
+                                .append(
+                                    $('<div>')
+                                        .addClass('modal-content')
+                                        .append(
+                                            $('<div>')
+                                                .addClass('modal-header')
+                                                .append(
+                                                    $('<h5>').addClass('modal-title').text('Fehler'),
+                                                    $('<button>').attr('type', 'button').addClass('btn-close').attr('data-bs-dismiss', 'modal')
+                                                )
+                                        )
+                                        .append(
+                                            $('<div>')
+                                                .addClass('modal-body')
+                                                .html('<pre>' + xhr.responseText + '</pre>')
+                                        )
+                                )
+                        )
+                );
+                
+                const errorModal = new bootstrap.Modal(document.getElementById('errorModal'));
+                errorModal.show();
+            }
+        });
+    });
+    
+    // Lege das Analyse-URL direkt fest (falls url_for Probleme hat)
+    const analyzeUrl = '/analyze/{{ pdf_file }}';
+    $('#analyzeBtn').attr('href', analyzeUrl);
+    
+    console.log('Analyse-URL:', analyzeUrl);
+
+    // KI-Analyse Button Ladeindikator hinzufügen
+    $('#analyzeBtn').on('click', function() {
+        console.log('KI-Analyse Button geklickt');
+        showLoading();
+    });
+
+    // Debug-Panel erweitern
+    $('#testDirectUrl').on('click', function() {
+        const analyzeUrl = '/analyze/{{ pdf_file }}';
+        window.open(analyzeUrl, '_blank');
+    });
+    
+    $('#showAllRoutes').on('click', function() {
+        const routes = ['/', '/extract', '/list_files', '/analyze/{{ pdf_file }}', '/results/{{ pdf_file }}'];
+        
+        let resultsHtml = '<div class="mt-3"><h6>Verfügbare Routen:</h6><ul class="list-group">';
+        
+        routes.forEach(route => {
+            resultsHtml += `
+                <li class="list-group-item d-flex justify-content-between align-items-center">
+                    ${route}
+                    <a href="${route}" class="btn btn-sm btn-outline-primary" target="_blank">Öffnen</a>
+                </li>
+            `;
+        });
+        
+        resultsHtml += '</ul></div>';
+        $('#debugResults').html(resultsHtml);
+    });
 });
 </script>
 
@@ -413,6 +571,11 @@ $(document).ready(function() {
         margin: 0 !important;
         border: 1px solid #dee2e6 !important;
     }
+}
+
+/* Debug-Styles */
+#debugInfo {
+    display: none;  /* Standardmäßig ausgeblendet, nur zur Entwicklung */
 }
 </style>
 {% endblock %}

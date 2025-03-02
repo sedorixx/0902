@@ -1,0 +1,200 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="card">
+    <div class="card-header d-flex justify-content-between align-items-center">
+        <h2 class="h5 mb-0">
+            <i class="fas fa-robot text-primary me-2"></i>KI-Analyse der Eintragungsfreiheit
+        </h2>
+        <div class="btn-group">
+            <a href="{{ url_for('results', filename=pdf_file) }}" class="btn btn-sm btn-outline-secondary">
+                <i class="fas fa-arrow-left me-1"></i>Zurück zu Ergebnissen
+            </a>
+            <button type="button" class="btn btn-sm btn-outline-primary" id="printAnalysis">
+                <i class="fas fa-print me-1"></i>Drucken
+            </button>
+        </div>
+    </div>
+    <div class="card-body">
+        <div class="analysis-summary mb-4 p-3 {% if is_free %}bg-success-light{% else %}bg-warning-light{% endif %}">
+            <div class="row">
+                <div class="col-md-2 text-center">
+                    {% if is_free %}
+                    <i class="fas fa-check-circle text-success fa-4x mb-2"></i>
+                    {% else %}
+                    <i class="fas fa-exclamation-triangle text-warning fa-4x mb-2"></i>
+                    {% endif %}
+                </div>
+                <div class="col-md-10">
+                    <h3 class="h4">Analyse-Ergebnis</h3>
+                    <p class="lead">
+                        {% if is_free %}
+                        Diese Rad/Reifenkombination ist <strong>eintragungsfrei</strong> gemäß der Analyse.
+                        {% else %}
+                        Diese Rad/Reifenkombination ist <strong>nicht eintragungsfrei</strong> und benötigt eine Eintragung.
+                        {% endif %}
+                    </p>
+                    {% if confidence %}
+                    <p><small>Zuverlässigkeit der Analyse: {{ confidence }}%</small></p>
+                    {% endif %}
+                </div>
+            </div>
+        </div>
+
+        <h4 class="mb-3"><i class="fas fa-search me-2"></i>Analysierte Informationen</h4>
+
+        <div class="card mb-4">
+            <div class="card-header bg-light">
+                <h5 class="mb-0">Fahrzeugdaten</h5>
+            </div>
+            <div class="card-body">
+                <div class="row">
+                    {% if vehicle_info %}
+                    <div class="col-md-6">
+                        <ul class="list-group">
+                            {% for key, value in vehicle_info.items() %}
+                            <li class="list-group-item d-flex justify-content-between align-items-center">
+                                <strong>{{ key }}</strong>
+                                <span>{{ value }}</span>
+                            </li>
+                            {% endfor %}
+                        </ul>
+                    </div>
+                    {% else %}
+                    <div class="col-12">
+                        <div class="alert alert-info">
+                            <i class="fas fa-info-circle me-2"></i>Keine Fahrzeugdaten gefunden
+                        </div>
+                    </div>
+                    {% endif %}
+                    
+                    {% if wheel_tire_info %}
+                    <div class="col-md-6">
+                        <ul class="list-group">
+                            {% for key, value in wheel_tire_info.items() %}
+                            <li class="list-group-item d-flex justify-content-between align-items-center">
+                                <strong>{{ key }}</strong>
+                                <span>{{ value }}</span>
+                            </li>
+                            {% endfor %}
+                        </ul>
+                    </div>
+                    {% endif %}
+                </div>
+            </div>
+        </div>
+
+        <div class="card mb-4">
+            <div class="card-header bg-light">
+                <h5 class="mb-0">Relevante Auflagencodes</h5>
+            </div>
+            <div class="card-body">
+                {% if condition_codes %}
+                <div class="table-responsive">
+                    <table class="table table-hover">
+                        <thead>
+                            <tr>
+                                <th>Code</th>
+                                <th>Beschreibung</th>
+                                <th>Auswirkung</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for code in condition_codes %}
+                            <tr>
+                                <td><strong>{{ code.code }}</strong></td>
+                                <td>{{ code.description }}</td>
+                                <td>
+                                    {% if code.impact == 'positive' %}
+                                    <span class="badge bg-success">Eintragungsfrei</span>
+                                    {% elif code.impact == 'neutral' %}
+                                    <span class="badge bg-secondary">Neutral</span>
+                                    {% else %}
+                                    <span class="badge bg-warning text-dark">Eintragung nötig</span>
+                                    {% endif %}
+                                </td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+                {% else %}
+                <div class="alert alert-info">
+                    <i class="fas fa-info-circle me-2"></i>Keine relevanten Auflagencodes gefunden
+                </div>
+                {% endif %}
+            </div>
+        </div>
+
+        <div class="card mb-4">
+            <div class="card-header bg-light">
+                <h5 class="mb-0">Analyse-Details</h5>
+            </div>
+            <div class="card-body">
+                {% if analysis_reasons %}
+                <div class="alert {% if is_free %}alert-success{% else %}alert-warning{% endif %}">
+                    <h6 class="alert-heading">Zusammenfassung</h6>
+                    <p>{{ analysis_summary }}</p>
+                </div>
+                
+                <h6>Gründe für diese Einschätzung:</h6>
+                <ul class="list-group">
+                    {% for reason in analysis_reasons %}
+                    <li class="list-group-item">
+                        <i class="{% if reason.type == 'positive' %}fas fa-check text-success{% elif reason.type == 'neutral' %}fas fa-info-circle text-secondary{% else %}fas fa-exclamation-triangle text-warning{% endif %} me-2"></i>
+                        {{ reason.text }}
+                    </li>
+                    {% endfor %}
+                </ul>
+                {% else %}
+                <div class="alert alert-info">
+                    <i class="fas fa-info-circle me-2"></i>Keine detaillierten Analyseergebnisse verfügbar
+                </div>
+                {% endif %}
+            </div>
+        </div>
+
+        <div class="alert alert-secondary">
+            <i class="fas fa-info-circle me-2"></i>
+            <strong>Hinweis:</strong> Diese KI-Analyse ist eine Hilfestellung und ersetzt nicht die rechtlich verbindliche Beratung durch einen Sachverständigen.
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+$(document).ready(function() {
+    $('#printAnalysis').on('click', function() {
+        window.print();
+    });
+});
+</script>
+
+<style>
+.bg-success-light {
+    background-color: rgba(25, 135, 84, 0.15);
+    border-radius: 4px;
+}
+
+.bg-warning-light {
+    background-color: rgba(255, 193, 7, 0.15);
+    border-radius: 4px;
+}
+
+@media print {
+    .btn-group, .navbar, footer {
+        display: none !important;
+    }
+    
+    .card {
+        border: none !important;
+        box-shadow: none !important;
+    }
+    
+    .card-header {
+        background-color: white !important;
+    }
+}
+</style>
+{% endblock %}
