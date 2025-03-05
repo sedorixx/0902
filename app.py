@@ -6,6 +6,7 @@ import re
 import jpype
 import os
 import pandas as pd
+import numpy as np
 import logging
 from werkzeug.utils import secure_filename
 import traceback
@@ -187,71 +188,335 @@ jvm_manager = JVMManager.get_instance()
 
 # Utility Functions
 def check_java():
-    """Überprüft die Java-Installation"""
+    """Überprüft die Java-Installation und gibt den Status zurück"""
     try:
         subprocess.check_output(['java', '-version'], stderr=subprocess.STDOUT)
+        logger.info("Java ist installiert und funktioniert")
         return True
     except (subprocess.CalledProcessError, FileNotFoundError) as e:
         logger.error("Java ist nicht installiert oder der 'java' Befehl ist nicht im PATH.")
         return False
 
-@lru_cache(maxsize=32)
-def is_valid_table(df):
-    """Überprüft, ob ein DataFrame eine echte Tabelle ist (mit Caching)"""
-    if df.empty or len(df.columns) < 2 or len(df) < 2:
-        return False
-    
-    # Reduziere die Mindestanforderung an gefüllte Zellen auf 50%
-    non_empty_cells = df.count()
-    total_rows = len(df)
-    if (non_empty_cells / total_rows < 0.5).any():
-        return False
-    
-    # Erlaube längere Texte in einzelnen Zellen
-    text_lengths = df.astype(str).apply(lambda x: x.str.len().mean())
-    if (text_lengths > 200).all():  # Erhöhe den Schwellenwert
-        return False
-    
-    # Prüfe auf Struktur statt nur numerische Werte
-    has_structure = False
-    for col in df.columns:
-        col_values = df[col].astype(str)
-        # Prüfe auf Muster in den Werten
-        # Implementierung fehlt hier
+def install_java():
+    """Versucht, Java automatisch zu installieren"""
+    try:
+        # Betriebssystem erkennen
+        import platform
+        system = platform.system().lower()
         
-    return True
-    
+        if system == 'linux':
+            logger.info("Versuche Java auf Linux zu installieren...")
+            # Überprüfen, ob apt, yum oder dnf verfügbar ist
+            if subprocess.call("which apt", shell=True, stdout=subprocess.PIPE) == 0:
+                subprocess.check_call(["sudo", "apt", "update"])
+                subprocess.check_call(["sudo", "apt", "install", "-y", "default-jre"])
+                return True
+            elif subprocess.call("which yum", shell=True, stdout=subprocess.PIPE) == 0:
+                subprocess.check_call(["sudo", "yum", "install", "-y", "java-11-openjdk"])
+                return True
+            elif subprocess.call("which dnf", shell=True, stdout=subprocess.PIPE) == 0:
+                subprocess.check_call(["sudo", "dnf", "install", "-y", "java-11-openjdk"])
+                return True
+        elif system == 'darwin':  # macOS
+            logger.info("Versuche Java auf macOS zu installieren...")
+            if subprocess.call("which brew", shell=True, stdout=subprocess.PIPE) == 0:
+                subprocess.check_call(["brew", "tap", "adoptopenjdk/openjdk"])
+                subprocess.check_call(["brew", "install", "--cask", "adoptopenjdk11"])
+                return True
+        elif system == 'windows':
+            logger.info("Automatische Java-Installation auf Windows wird nicht unterstützt")
+            # Windows-Installation ist komplexer und erfordert Administratorrechte
+        
+        logger.error("Automatische Java-Installation nicht möglich")
+        return False
+    except Exception as e:
+        logger.error(f"Fehler bei der Java-Installation: {str(e)}")
+        return False
+
 def process_pdf_with_encoding(pdf_path, output_format='csv'):
-    """Verarbeitet PDF-Datei mit Berücksichtigung der Kodierung"""
+    """Verarbeitet PDF-Datei mit Berücksichtigung der Kodierung für 1:1-Extraktion"""
+    # Prüfe, ob Java verfügbar ist
+    if not check_java():
+        logger.warning("Java nicht gefunden. Verwende Fallback-Methode.")
+        return process_pdf_without_java(pdf_path, output_format)
+        
     all_tables = []
     try:
         # JVM initialisieren
         jvm_manager.initialize()
         
-        # Extrahiere Tabellen mit tabula
-        tables = tabula.read_pdf(pdf_path, pages='all', multiple_tables=True)
+        # Fokus auf Lattice-Modus (für Tabellen mit sichtbaren Linien)
+        # Dies ist am besten für strukturerhaltende 1:1-Extraktion
+        logger.info("Lattice-Modus für präzise Tabellenextraktion")
+        tables = tabula.read_pdf(
+            pdf_path, 
+            pages='all', 
+            multiple_tables=True,
+            lattice=True,
+            guess=False,
+            silent=True
+        )
         
-        for table in tables:
-            table = table.fillna('')
+        # Wenn keine Tabellen gefunden wurden oder sie unvollständig erscheinen, 
+        # versuchen wir den Stream-Modus als nächstes
+        if not tables or len(tables) == 0:
+            logger.info("Keine Tabellen im Lattice-Modus gefunden. Versuche Stream-Modus.")
+            tables = tabula.read_pdf(
+                pdf_path, 
+                pages='all', 
+                multiple_tables=True,
+                stream=True,
+                guess=False,
+                silent=True
+            )
+        
+        # Letzte Option: Kombination aus beiden mit Guess-Parameter
+        if not tables or len(tables) == 0:
+            logger.info("Versuche kombinierte Methode mit Guess-Parameter")
+            tables = tabula.read_pdf(
+                pdf_path,
+                pages='all',
+                multiple_tables=True,
+                stream=True,
+                lattice=True,
+                guess=True,
+                silent=True
+            )
+        
+        logger.info(f"Tabula hat insgesamt {len(tables)} potenzielle Tabellen gefunden")
+        
+        # Verarbeite alle gefundenen Tabellen mit minimaler Manipulation
+        for i, table in enumerate(tables):
+            logger.info(f"Prüfe Tabelle {i+1}: {table.shape[0]} Zeilen, {table.shape[1]} Spalten")
             
-            # Konvertiere zu String für einheitliche Verarbeitung
-            table = table.astype(str)
+            # MINIMALE Nachbearbeitung - nur NaN durch leere Strings ersetzen
+            clean_table = table.fillna('')
             
-            if not table.empty and is_valid_table(table):
-                all_tables.append(table)
-                print(f"Gültige Tabelle gefunden mit {len(table)} Zeilen und {len(table.columns)} Spalten")
+            # Keine Validierung oder Filterung mehr - alle gefundenen Tabellen akzeptieren
+            all_tables.append(clean_table)
+            logger.info(f"Tabelle {i+1} hinzugefügt (1:1 Extraktion)")
 
+        if not all_tables:
+            logger.warning("Keine Tabellen mit tabula gefunden. Versuche Fallback-Methode.")
+            return process_pdf_without_java(pdf_path, output_format)
+            
         return all_tables
 
     except Exception as e:
-        print(f"Fehler bei der Tabellenextraktion: {str(e)}")
-        return []
+        logger.error(f"Fehler bei der Tabellenextraktion mit tabula: {str(e)}")
+        logger.info("Versuche Fallback-Methode.")
+        return process_pdf_without_java(pdf_path, output_format)
+
+def process_pdf_without_java(pdf_path, output_format='csv'):
+    """Verarbeitet PDF-Datei ohne Java mit pdfplumber für 1:1-Extraktion"""
+    logger.info("Verwende pdfplumber für 1:1 PDF-Tabellenextraktion")
+    all_tables = []
+    
+    try:
+        import numpy as np
+        import pdfplumber
+        
+        with pdfplumber.open(pdf_path) as pdf:
+            for page_num, page in enumerate(pdf.pages):
+                logger.info(f"Verarbeite Seite {page_num+1} mit pdfplumber")
+                
+                # Standard-Tabelleneinstellungen - am besten für strukturerhaltende Extraktion
+                tables = page.extract_tables()
+                
+                # Nur wenn keine Tabellen gefunden wurden, verwenden wir alternative Einstellungen
+                if not tables:
+                    logger.info(f"Keine Standard-Tabellen auf Seite {page_num+1} gefunden. Versuche erweiterte Erkennung.")
+                    tables = page.extract_tables(table_settings={
+                        "vertical_strategy": "text", 
+                        "horizontal_strategy": "text",
+                        "snap_tolerance": 3,
+                        "join_tolerance": 3,
+                        "edge_min_length": 3,
+                        "min_words_vertical": 1,
+                        "min_words_horizontal": 1
+                    })
+                
+                logger.info(f"pdfplumber hat {len(tables)} Tabellen auf Seite {page_num+1} gefunden")
+                
+                for i, table_data in enumerate(tables):
+                    if not table_data:
+                        logger.info(f"Tabelle {i+1} auf Seite {page_num+1} ist leer")
+                        continue
+                    
+                    # Erstellen eines DataFrame mit EXAKT derselben Struktur wie die gefundene Tabelle
+                    headers = [f"Spalte_{j+1}" for j in range(len(table_data[0]))] if table_data[0] else []
+                    
+                    # Wenn die erste Zeile gute Überschriften enthält, nutze diese
+                    if all(str(h).strip() for h in table_data[0]):
+                        df = pd.DataFrame(table_data[1:], columns=table_data[0])
+                    else:
+                        df = pd.DataFrame(table_data, columns=headers)
+                    
+                    # Minimale Nachbearbeitung
+                    df = df.fillna('')
+                    
+                    all_tables.append(df)
+                    logger.info(f"Tabelle {i+1} auf Seite {page_num+1} hinzugefügt (1:1 Extraktion)")
+        
+        if not all_tables:
+            logger.warning("Keine Tabellen mit pdfplumber gefunden. Extrahiere Text als letzte Option.")
+            # Versuche als letzten Ausweg den gesamten Text zu extrahieren
+            return extract_text_as_structured_table(pdf_path)
+            
+        return all_tables
+
+    except Exception as e:
+        logger.error(f"Fehler bei der pdfplumber Extraktion: {str(e)}")
+        return extract_text_as_structured_table(pdf_path)
+
+def extract_text_as_structured_table(pdf_path):
+    """Extrahiert Text und versucht, eine Tabellenstruktur zu erkennen"""
+    logger.info("Versuche Text mit Strukturerkennung zu extrahieren")
+    try:
+        import pdfplumber
+        
+        all_tables = []
+        with pdfplumber.open(pdf_path) as pdf:
+            for page_num, page in enumerate(pdf.pages):
+                text = page.extract_text()
+                if not text:
+                    continue
+                
+                # Zeilen nach Zeilenumbrüchen trennen
+                lines = [line.strip() for line in text.split('\n') if line.strip()]
+                
+                # Versuchen wir, die Tabellenstruktur zu erkennen (suche nach Tabulatoren oder mehreren Leerzeichen)
+                rows = []
+                for line in lines:
+                    # Zuerst nach Tabs suchen
+                    if '\t' in line:
+                        cells = [cell.strip() for cell in line.split('\t')]
+                        rows.append(cells)
+                    else:
+                        # Nach mehreren Leerzeichen suchen (wahrscheinliche Zellentrennungen)
+                        split_pattern = re.compile(r'\s{2,}')
+                        cells = [cell.strip() for cell in split_pattern.split(line) if cell.strip()]
+                        if len(cells) > 1:  # Nur hinzufügen, wenn es wie eine Tabelle aussieht
+                            rows.append(cells)
+                
+                if rows:
+                    # Finde die maximale Anzahl von Spalten
+                    max_cols = max(len(row) for row in rows)
+                    
+                    # Fülle Zeilen mit weniger Spalten auf
+                    padded_rows = [row + [''] * (max_cols - len(row)) for row in rows]
+                    
+                    # Versuche zu erkennen, ob die erste Zeile eine Überschriftenzeile ist
+                    has_header = False
+                    if len(padded_rows) > 1:
+                        first_row = padded_rows[0]
+                        # Wenn die erste Zeile kürzer ist oder sich deutlich von den anderen unterscheidet
+                        # (z.B. enthält keine Zahlen, enthält nur Text), dann ist es wahrscheinlich eine Überschrift
+                        if all(not re.search(r'\d', cell) for cell in first_row) and \
+                           any(re.search(r'\d', cell) for row in padded_rows[1:] for cell in row):
+                            has_header = True
+                    
+                    if has_header:
+                        df = pd.DataFrame(padded_rows[1:], columns=padded_rows[0])
+                    else:
+                        df = pd.DataFrame(padded_rows, columns=[f"Spalte_{i+1}" for i in range(max_cols)])
+                    
+                    all_tables.append(df)
+                    logger.info(f"Strukturierte Texttabelle von Seite {page_num+1} extrahiert: {len(df)} Zeilen, {len(df.columns)} Spalten")
+        
+        if not all_tables:
+            # Als letzte Option, erstelle eine einfache Texttabelle
+            return extract_text_as_simple_table(pdf_path)
+            
+        return all_tables
+        
+    except Exception as e:
+        logger.error(f"Fehler bei der strukturierten Textextraktion: {str(e)}")
+        return extract_text_as_simple_table(pdf_path)
+
+def extract_text_as_simple_table(pdf_path):
+    """Letzte Fallback-Methode: Extrahiert Text als einfache Tabelle"""
+    logger.info("Extrahiere Text als einfache Tabelle (letzte Option)")
+    try:
+        import pdfplumber
+        
+        all_text = []
+        with pdfplumber.open(pdf_path) as pdf:
+            for page in pdf.pages:
+                text = page.extract_text()
+                if text:
+                    all_text.append(text)
+        
+        if not all_text:
+            logger.error("Kein Text in der PDF gefunden")
+            # Erstelle leere DataFrame mit Hinweis
+            return [pd.DataFrame([["Keine Tabellen oder Text in der PDF erkannt"]], columns=["Hinweis"])]
+            
+        # Kombiniere allen Text und teile nach Zeilen
+        combined_text = '\n'.join(all_text)
+        lines = [line for line in combined_text.split('\n') if line.strip()]
+        
+        if not lines:
+            logger.error("Keine Textzeilen gefunden")
+            return [pd.DataFrame([["Keine strukturierten Zeilen in der PDF gefunden"]], columns=["Hinweis"])]
+        
+        # Erstelle ein einfaches DataFrame mit dem Text
+        df = pd.DataFrame(lines, columns=["PDF-Textinhalt"])
+        
+        logger.info(f"Einfache Texttabelle mit {len(df)} Zeilen erstellt")
+        return [df]
+        
+    except Exception as e:
+        logger.error(f"Fehler beim finalen Fallback: {str(e)}")
+        # Erstelle generische Fehlertabelle
+        return [pd.DataFrame([["Fehler bei der Textextraktion: " + str(e)]], columns=["Fehler"])]
 
 @app.route('/', methods=['GET'])
 def index():
+    java_installed = check_java()
+    return render_template('index.html', java_installed=java_installed)
+
+@app.route('/', methods=['POST'], endpoint='index_post')
+def index_post():
+    """Endpunkt zum Versuch der Java-Installation"""
+    if install_java():
+        return jsonify({
+            'success': True,
+            'message': 'Java wurde erfolgreich installiert. Sie können die Anwendung jetzt nutzen.'
+        })
+    else:
+        return jsonify({
+            'success': False,
+            'message': 'Automatische Installation fehlgeschlagen. Bitte installieren Sie Java manuell.'
+        }), 500
+
+@app.route('/home', methods=['GET'])
+def home():
     if not check_java():
         return "Fehler: Java muss installiert sein, um diese Anwendung zu nutzen. Bitte installieren Sie Java und stellen Sie sicher, dass der 'java' Befehl im PATH ist.", 500
     return render_template('index.html')
+
+@lru_cache(maxsize=32)
+def is_valid_table(df):
+    """Überprüft, ob ein DataFrame eine echte Tabelle ist (mit Caching)"""
+    # Grundlegende Prüfung - Tabelle muss Inhalt haben
+    if df.empty:
+        logger.info("Tabelle wird abgelehnt: Leer")
+        return False
+    
+    # Extrem lockere Validierung
+    # Mindestens 1 Spalte und 1 Zeile
+    if len(df.columns) == 0 or len(df) == 0:
+        logger.info(f"Tabelle wird abgelehnt: Keine Spalten oder Zeilen ({len(df.columns)}x{len(df)})")
+        return False
+    
+    # Mindestens ein nicht-leerer Wert in der Tabelle
+    if df.astype(str).replace('', np.nan).count().sum() == 0:
+        logger.info("Tabelle wird abgelehnt: Enthält keine Daten")
+        return False
+        
+    logger.info(f"Tabelle akzeptiert: {len(df)} Zeilen, {len(df.columns)} Spalten")
+    return True
 
 def convert_table_to_html(df):
     """Konvertiert DataFrame in formatiertes HTML"""
@@ -554,7 +819,41 @@ def extract():
         
         # Speichere die Original-PDF-ID für die Suche
         pdf_id = os.path.splitext(filename)[0]
+        
+        logger.info(f"Starte Extraktion aus PDF: {pdf_path}")
+        
+        # Erhöhe die Wahrscheinlichkeit, dass Tabellen gefunden werden
         tables = process_pdf_with_encoding(pdf_path, output_format)
+        
+        # Sicherstellen, dass immer ein Ergebnis zurückgegeben wird
+        if not tables:
+            logger.warning("Keine Tabellen gefunden. Erstelle Notfalltabelle mit PDF-Text.")
+            
+            # Extrahiere den vollständigen Text aus der PDF als Notfalllösung
+            try:
+                import pdfplumber
+                text_content = []
+                with pdfplumber.open(pdf_path) as pdf:
+                    for page in pdf.pages:
+                        page_text = page.extract_text()
+                        if page_text:
+                            text_content.extend(page_text.split('\n'))
+                
+                # Erstelle ein einfaches DataFrame mit dem Textinhalt
+                if text_content:
+                    text_df = pd.DataFrame(text_content, columns=["PDF-Textinhalt"])
+                    tables = [text_df]
+                    logger.info("Textinhalt als Notfalltabelle erstellt")
+                else:
+                    # Absolute Notfalllösung: Leere Tabelle mit Hinweistext
+                    tables = [pd.DataFrame([["Keine Tabellen in der PDF erkannt. Bitte andere PDF probieren oder manuell Daten eingeben."]], 
+                                columns=["Hinweis"])]
+                    logger.warning("Erstelle leere Tabelle mit Hinweis")
+            except Exception as text_error:
+                logger.error(f"Fehler bei der Textextraktion: {str(text_error)}")
+                tables = [pd.DataFrame([["Keine Tabellen in der PDF erkannt. Bitte andere PDF probieren oder manuell Daten eingeben."]], 
+                            columns=["Hinweis"])]
+        
         results = []
         table_htmls = []
         
@@ -575,17 +874,23 @@ def extract():
                 try:
                     table.to_excel(output_path, index=False, engine='openpyxl')
                 except ImportError:
-                    print("Installing openpyxl...")
+                    logger.info("Installing openpyxl...")
                     subprocess.check_call([sys.executable, "-m", "pip", "install", "openpyxl"])
                     table.to_excel(output_path, index=False, engine='openpyxl')
                     
             temp_storage.add_file(output_filename)  # Markiere Tabelle als aktiv
             results.append(output_filename)
-            
-        # Extrahiere Auflagen-Codes und deren Texte
-        auflagen_codes = extract_auflagen_codes(tables)
-        extracted_texts = extract_auflagen_with_text(pdf_path)
         
+        # Extrahiere Auflagen-Codes und deren Texte 
+        # Auch wenn keine Tabellen gefunden wurden, versuchen wir, Codes direkt aus der PDF zu extrahieren
+        auflagen_codes = []
+        try:
+            auflagen_codes = extract_auflagen_codes(tables) 
+            extracted_texts = extract_auflagen_with_text(pdf_path)
+        except Exception as e:
+            logger.error(f"Fehler bei der Auflagen-Extraktion: {str(e)}")
+            extracted_texts = {}
+            
         # Erstelle Liste von AuflagenCode-Objekten mit den extrahierten Texten
         condition_codes = [
             AuflagenCode(
@@ -594,9 +899,6 @@ def extract():
             )
             for code in auflagen_codes
         ]
-        
-        if not results:
-            return "Keine Tabellen in der PDF-Datei gefunden.", 400
             
         # Automatische Bereinigung nach 1 Stunde
         def delayed_cleanup():
@@ -617,6 +919,7 @@ def extract():
     except Exception as e:
         import traceback
         error_details = traceback.format_exc()
+        logger.error(f"Fehler bei der PDF-Verarbeitung: {str(e)}\n{error_details}")
         error_msg = (
             f"Fehler bei der PDF-Verarbeitung:\n"
             f"1. PDF-Datei könnte beschädigt sein\n"
@@ -1349,3 +1652,8 @@ def results(filename):
         import traceback
         error_details = traceback.format_exc()
         return f"Fehler beim Anzeigen der Ergebnisse: {str(e)}<br/><pre>{error_details}</pre>", 500
+
+# Flask-App starten
+if __name__ == "__main__":
+    init_db()
+    app.run(debug=True, host='0.0.0.0', port=5000)

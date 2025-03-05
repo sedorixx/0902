@@ -1,19 +1,12 @@
-# GitHub Copilot Instructions
-
-# 1. Verwende Englisch für code-spezifische Elemente wie Variablennamen, Funktionsnamen und Kommentare.
-# 2. Verwende Deutsch für alle benutzerorientierten Texte wie Zeichenketten und UI-Elemente.
-# 3. Halte Code-Vervollständigungen prägnant, um die Tokenlänge zu minimieren.
-# 4. Vermeide redundante oder übermäßig lange Kommentare und Variablennamen.
-# 5. Beschränke die Anzahl der Zeilen pro Code-Vervollständigung, um die Lesbarkeit zu verbessern.
-
-# Beispiel:
-def process_data(data):
-    # Process the data efficiently
-    result = []
-    for item in data:
-        if item is not None:
-            result.append(item)
-    return result
-
-# Benutzerorientierte Texte:
-benutzer_begruessung = "Willkommen zu meiner App!"
+# Copyright (c) Microsoft Corporation. All rights reserved.
+module 'sys' has no attribute 'real_prefix'
+  File "/home/vscode/.vscode-remote/extensions/ms-python.debugpy-2025.0.1-linux-x64/bundled/libs/debugpy/common/util.py", line 1, in <module>
+    # Copyright (c) Microsoft Corporation. All rights reserved.
+    ^^^^^^^^^^^^^^^
+  File "/home/vscode/.vscode-remote/extensions/ms-python.debugpy-2025.0.1-linux-x64/bundled/libs/debugpy/common/util.py", line 16, in evaluate
+    return eval(expr, {}, sys.modules)
+  File "/home/vscode/.vscode-remote/extensions/ms-python.debugpy-2025.0.1-linux-x64/bundled/libs/debugpy/common/log.py", line 297, in <lambda>
+    get_paths = lambda: util.evaluate(expr)
+  File "/home/vscode/.vscode-remote/extensions/ms-python.debugpy-2025.0.1-linux-x64/bundled/libs/debugpy/common/log.py", line 299, in report_paths
+    paths = get_paths()
+  File "/home/vscode/.vscode-remote/extensions/ms-python.debugpy-2025.0.1-linux-x64/bundled/libs/debugpy/common/log.py", line 328, in get_environment_description
