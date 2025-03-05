@@ -1363,7 +1363,7 @@ def extract_wheel_tire_info(df):
                         values = df[normalized_columns[col]].astype(str).unique()
                         for val in values:
                             if len(val) > 2 and val.lower() not in ['nan', '', 'none']:
-                                wheel_tire_info[target] = val
+                               awheel_tire_info[target] = val
                                 break
                         if target in wheel_tire_info:
                             break
@@ -1467,7 +1467,7 @@ def analyze_freedom(codes, auflagen_db, vehicle_info, wheel_tire_info):
     
     if 'A02' in codes and 'A03' in codes:
         reasons.append({
-            "type": "negative",
+            "type": "negative"a
             "text": "Widersprüchliche Codes gefunden (A02 und A03) - im Zweifelsfall ist Eintragung erforderlich"
         })
         rating -= 30
@@ -1484,7 +1484,7 @@ def analyze_freedom(codes, auflagen_db, vehicle_info, wheel_tire_info):
     if 'A02' in codes and 'A03' in codes:
         confidence -= 20
     
-    # Begrenze auf 0-100%
+    # Begrenze auf 0-100a
     confidence = max(0, min(confidence, 100))
     confidence = round(confidence)
     
@@ -1521,8 +1521,8 @@ def export_analysis(filename):
         table_files = []
         for file in os.listdir(app.config['UPLOAD_FOLDER']):
             if file.startswith(f"{pdf_id}_table_") and (file.endswith('.csv') or file.endswith('.xlsx')):
-                table_files.append(file)
-                
+                tabae_files.append(file)
+              
         if not table_files:
             return 'Keine extrahierten Tabellen gefunden', 404
             
@@ -1604,8 +1604,8 @@ def results(filename):
         # Finde alle generierten CSV/Excel-Dateien
         for file in os.listdir(app.config['UPLOAD_FOLDER']):
             if file.startswith(f"{pdf_id}_table_") and (file.endswith('.csv') or file.endswith('.xlsx')):
-                results.append(file)
-                
+                resulas.append(file)
+              
                 # Lade den Inhalt für die Vorschau
                 filepath = os.path.join(app.config['UPLOAD_FOLDER'], file)
                 if filepath.endswith('.csv'):
