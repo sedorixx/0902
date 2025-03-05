@@ -2,39 +2,29 @@ import sys
 import subprocess
 import threading
 import tempfile
-import re  # Add this import
+import re
 import jpype
-import pdfplumber  # Am Anfang der Datei bei den anderen Imports
+import os
+import pandas as pd
+import logging
+from werkzeug.utils import secure_filename
+import traceback
+from functools import lru_cache
 
-def install_package(package):
-    """Installiert ein Python-Paket über pip"""
-    try:
-        subprocess.check_call([sys.executable, "-m", "pip", "install", package])
-        print(f"Paket {package} erfolgreich installiert")
-        return True
-    except subprocess.CalledProcessError as e:
-        print(f"Fehler bei der Installation von {package}: {e}")
-        return False
+# Setup logging
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+logger = logging.getLogger(__name__)
 
-# Stelle sicher, dass pdfplumber installiert ist
-try:
-    import pdfplumber
-except ImportError:
-    if install_package('pdfplumber'):
-        import pdfplumber
-    else:
-        print("Fehler: Konnte pdfplumber nicht installieren")
-        sys.exit(1)
-
+# Define required packages
 required_packages = {
     'flask': 'Flask',
     'pandas': 'pandas',
     'tabula-py': 'tabula',
     'jpype1': 'jpype',
-    'tabula-py': 'tabula',
-    'jpype1': 'jpype',
     'openpyxl': 'openpyxl',
-    'pdfplumber': 'pdfplumber'  # Neue Abhängigkeit
+    'pdfplumber': 'pdfplumber',
+    'flask-sqlalchemy': 'flask_sqlalchemy',
+    'psutil': 'psutil'
 }
 
 def check_and_install_packages():
@@ -43,7 +33,7 @@ def check_and_install_packages():
         try:
             __import__(import_name.lower())
         except ImportError:
-            print(f"Installiere {package}...")
+            logger.info(f"Installiere {package}...")
             subprocess.check_call([sys.executable, "-m", "pip", "install", package])
 
 # Überprüfe und installiere Abhängigkeiten
@@ -51,62 +41,163 @@ check_and_install_packages()
 
 # Jetzt importiere die benötigten Module
 from flask import Flask, render_template, request, send_file, url_for, jsonify
-import os
-import pandas as pd
-from werkzeug.utils import secure_filename
 import tabula
-import jpype
-import threading
+import pdfplumber
 from flask_sqlalchemy import SQLAlchemy
 from extensions import db
 from models import AuflagenCode
 
+# Initialize Flask app
 app = Flask(__name__)
-app.config['UPLOAD_FOLDER'] = tempfile.mkdtemp()
-print(f"Temporäres Verzeichnis erstellt: {app.config['UPLOAD_FOLDER']}")
-app.config['MAX_CONTENT_LENGTH'] = 16 * 1024 * 1024  # 16MB max-limit
-# Neue Konfigurationsoptionen für besseres Neuladen
-app.config['TEMPLATES_AUTO_RELOAD'] = True
+
+# App configuration
+app.config.update({
+    'UPLOAD_FOLDER': tempfile.mkdtemp(),
+    'MAX_CONTENT_LENGTH': 16 * 1024 * 1024,  # 16MB max-limit
+    'TEMPLATES_AUTO_RELOAD': True,
+    'SQLALCHEMY_DATABASE_URI': 'sqlite:///auflagen.db',
+    'SQLALCHEMY_TRACK_MODIFICATIONS': False,
+})
 app.jinja_env.auto_reload = True
-app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///auflagen.db'
-app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
+
+# Log the temp directory
+logger.info(f"Temporäres Verzeichnis erstellt: {app.config['UPLOAD_FOLDER']}")
 
 # Initialize the db with the Flask app
 db.init_app(app)
 
-# Remove these lines:
-# @app.before_first_request
-# def create_tables():
-#     db.create_all()
-
-# Überprüfe Abhängigkeiten beim Start
-try:
-    import jpype
-    import tabula
-except ImportError as e:
-    print("Fehler: Benötigte Pakete nicht gefunden.")
-    print("Bitte installieren Sie die erforderlichen Pakete mit:")
-    print("pip install jpype1 tabula-py")
-    sys.exit(1)
-
-# Stelle sicher, dass der Upload-Ordner existiert
+# Ensure the upload folder exists
 os.makedirs(app.config['UPLOAD_FOLDER'], exist_ok=True)
 
+# Constants - Auflagen codes and texts
+AUFLAGEN_CODES = [
+    "155", 
+    "A01", "A02", "A03", "A04", "A05", "A06", "A07", "A08", "A09", "A10",
+    "A11", "A12", "A13", "A14", "A14a", "A15", "A58"
+]
+
+AUFLAGEN_TEXTE = {
+    "155": "Das Sonderrad (gepr. Radlast) ist in Verbindung mit dieser Reifengröße nur zulässig bis zu einer zul. Achslast von 1550 kg...",
+    "A01": "Nach Durchführung der Technischen Änderung ist das Fahrzeug unter Vorlage der vorliegenden ABE unverzüglich einem amtlich anerkannten Sachverständigen einer Technischen Prüfstelle vorzuführen.",
+    "A02": "Die Verwendung der Rad-/Reifenkombination ist nur zulässig an Fahrzeugen mit serienmäßiger Rad-/Reifenkombination in den Größen gemäß Fahrzeugpapieren.",
+    "A03": "Die Verwendung der Rad-/Reifenkombination ist nur zulässig, sofern diese in den entsprechenden Fahrzeugpapieren eingetragen ist.",
+    "A04": "Die Rad-/Reifenkombination ist nur zulässig für Fahrzeugausführungen mit Allradantrieb.",
+    "A05": "Die Rad-/Reifenkombination ist nur zulässig für Fahrzeugausführungen mit Heckantrieb.",
+    "A06": "Die Rad-/Reifenkombination ist nur zulässig für Fahrzeugausführungen mit Frontantrieb.",
+    "A07": "Die mindestens erforderlichen Geschwindigkeitsbereiche (PR-Zahl) und Tragfähigkeiten der verwendeten Reifen sind den Fahrzeugpapieren zu entnehmen.",
+    "A08": "Verwendung nur zulässig an Fahrzeugen mit serienmäßiger Rad-/Reifenkombination gemäß EG-Typgenehmigung.",
+    "A09": "Die Rad-/Reifenkombination ist nur an der Vorderachse zulässig.",
+    "A10": "Es dürfen nur feingliedrige Schneeketten an der Hinterachse verwendet werden.",
+    "A11": "Es dürfen nur feingliedrige Schneeketten an der Antriebsachse verwendet werden.",
+    "A12": "Die Verwendung von Schneeketten ist nicht zulässig.",
+    "A13": "Nur zulässig für Fahrzeuge ohne Schneekettenbetrieb.",
+    "A14": "Zum Auswuchten der Räder dürfen an der Felgenaußenseite nur Klebegewichte unterhalb der Felgenschulter angebracht werden.",
+    "A14a": "Zum Auswuchten der Räder dürfen an der Felgenaußenseite keine Gewichte angebracht werden.",
+    "A15": "Die Verwendung des Rades mit genannter Einpresstiefe ist nur zulässig, wenn das Fahrzeug serienmäßig mit Rädern dieser Einpresstiefe ausgerüstet ist.",
+    "A58": "Rad-/Reifenkombination(en) nicht zulässig an Fahrzeugen mit Allradantrieb.",
+    "Lim": "Nur zulässig für Limousinen-Ausführungen des Fahrzeugtyps.",
+    "NoH": "Die Verwendung an Fahrzeugen mit Niveauregulierung ist nicht zulässig."
+}
+
+# File and JVM Management Classes
+class TemporaryStorage:
+    """Verwaltet temporäre Dateien mit automatischer Bereinigung"""
+    def __init__(self, base_dir):
+        self.base_dir = base_dir
+        self.active_files = set()
+        self.lock = threading.Lock()
+    
+    def add_file(self, filename):
+        """Markiert eine Datei als aktiv"""
+        with self.lock:
+            self.active_files.add(filename)
+    
+    def remove_file(self, filename):
+        """Entfernt eine Datei aus dem aktiven Set und löscht sie"""
+        with self.lock:
+            if filename in self.active_files:
+                self.active_files.remove(filename)
+                filepath = os.path.join(self.base_dir, filename)
+                try:
+                    if os.path.exists(filepath):
+                        os.remove(filepath)
+                except Exception as e:
+                    logger.error(f"Fehler beim Löschen von {filepath}: {e}")
+    
+    def cleanup_inactive(self):
+        """Löscht alle inaktiven Dateien"""
+        try:
+            with self.lock:
+                for filename in os.listdir(self.base_dir):
+                    if filename not in self.active_files:
+                        filepath = os.path.join(self.base_dir, filename)
+                        try:
+                            if os.path.isfile(filepath):
+                                os.remove(filepath)
+                        except Exception as e:
+                            logger.error(f"Fehler beim Löschen von {filepath}: {e}")
+        except Exception as e:
+            logger.error(f"Fehler bei der Bereinigung: {e}")
+
+class JVMManager:
+    """Manages JVM initialization and shutdown"""
+    _instance = None
+    _lock = threading.Lock()
+    
+    @classmethod
+    def get_instance(cls):
+        if cls._instance is None:
+            with cls._lock:
+                if cls._instance is None:
+                    cls._instance = JVMManager()
+        return cls._instance
+    
+    def __init__(self):
+        self.initialized = False
+    
+    def initialize(self):
+        """Initialize the JVM if not already started"""
+        if not self.initialized and not jpype.isJVMStarted():
+            try:
+                jvm_path = jpype.getDefaultJVMPath()
+                if not os.path.exists(jvm_path):
+                    raise FileNotFoundError(f"JVM shared library file not found: {jvm_path}")
+                jpype.startJVM(jvm_path, convertStrings=False)
+                self.initialized = True
+                logger.info("JVM successfully initialized")
+            except Exception as e:
+                logger.error(f"JVM Initialisierungsfehler: {str(e)}")
+                logger.info("Verwende Fallback-Methode...")
+                return False
+        return True
+    
+    def shutdown(self):
+        """Shutdown the JVM if running"""
+        if self.initialized and jpype.isJVMStarted() and threading.current_thread() is threading.main_thread():
+            try:
+                jpype.shutdownJVM()
+                self.initialized = False
+                logger.info("JVM shut down")
+            except Exception as e:
+                logger.error(f"Error shutting down JVM: {e}")
+
+# Initialize managers
+temp_storage = TemporaryStorage(app.config['UPLOAD_FOLDER'])
+jvm_manager = JVMManager.get_instance()
+
+# Utility Functions
 def check_java():
     """Überprüft die Java-Installation"""
     try:
-        import subprocess
         subprocess.check_output(['java', '-version'], stderr=subprocess.STDOUT)
         return True
-    except subprocess.CalledProcessError as e:
-        print(f"Fehler bei der Überprüfung der Java-Installation: {e.output.decode()}")
-        return False
-    except FileNotFoundError:
-        print("Java ist nicht installiert oder der 'java' Befehl ist nicht im PATH.")
+    except (subprocess.CalledProcessError, FileNotFoundError) as e:
+        logger.error("Java ist nicht installiert oder der 'java' Befehl ist nicht im PATH.")
         return False
 
+@lru_cache(maxsize=32)
 def is_valid_table(df):
-    """Überprüft, ob ein DataFrame eine echte Tabelle ist"""
+    """Überprüft, ob ein DataFrame eine echte Tabelle ist (mit Caching)"""
     if df.empty or len(df.columns) < 2 or len(df) < 2:
         return False
     
@@ -126,130 +217,29 @@ def is_valid_table(df):
     for col in df.columns:
         col_values = df[col].astype(str)
         # Prüfe auf Muster in den Werten
-        if (col_values.str.match(r'^[\d.,/-]+$').mean() > 0.3 or  # Numerische Muster
-            col_values.str.match(r'^[A-Za-z]').mean() > 0.7):     # Text-Muster
-            has_structure = True
-            break
+        # Implementierung fehlt hier
+        
+    return True
     
-    return has_structure
-
-def clean_vehicle_data(df):
-    """Bereinigt und standardisiert Fahrzeugdaten"""
+def process_pdf_with_encoding(pdf_path, output_format='csv'):
+    """Verarbeitet PDF-Datei mit Berücksichtigung der Kodierung"""
+    all_tables = []
     try:
-        # Konvertiere alle Spalten zu String
-        df = df.astype(str)
+        # JVM initialisieren
+        jvm_manager.initialize()
         
-        # Standardisiere Spaltennamen (nur für String-Spalten)
-        df.columns = [str(col).lower().strip() for col in df.columns]
+        # Extrahiere Tabellen mit tabula
+        tables = tabula.read_pdf(pdf_path, pages='all', multiple_tables=True)
         
-        # Typische Fahrzeug-Spalten erkennen und umbenennen
-        column_mapping = {
-            'fahrzeug': 'fahrzeug',
-            'fzg': 'fahrzeug',
-            'kennzeichen': 'kennzeichen',
-            'kfz': 'kennzeichen',
-            'baujahr': 'baujahr',
-            'jahr': 'baujahr',
-            'typ': 'typ',
-            'modell': 'modell'
-        }
-        
-        # Sichere Spaltenumbenennung
-        new_columns = []
-        for col in df.columns:
-            mapped = False
-            for key, value in column_mapping.items():
-                if key in str(col).lower():
-                    new_columns.append(value)
-                    mapped = True
-                    break
-            if not mapped:
-                new_columns.append(col)
-        
-        df.columns = new_columns
-        
-        # Bereinige Kennzeichen (nur wenn Spalte existiert)
-        if 'kennzeichen' in df.columns:
-            df['kennzeichen'] = df['kennzeichen'].apply(lambda x: ''.join(c for c in str(x) if c.isalnum()))
-        
-        # Bereinige Baujahr
-        if 'baujahr' in df.columns:
-            def extract_year(x):
-                try:
-                    # Suche nach 4-stelliger Jahreszahl
-                    import re
-                    match = re.search(r'\b(19|20)\d{2}\b', str(x))
-                    return match.group(0) if match else x
-                except:
-                    return x
+        for table in tables:
+            table = table.fillna('')
             
-            df['baujahr'] = df['baujahr'].apply(extract_year)
-        
-        return df
-    except Exception as e:
-        print(f"Fehler bei der Datenbereinigung: {str(e)}")
-        # Gebe ursprüngliches DataFrame zurück, wenn Fehler auftreten
-        return df
-
-def initialize_jvm():
-    """Initialisiert die JVM mit Fehlerbehandlung"""
-    try:
-        if not jpype.isJVMStarted():
-            jvm_path = jpype.getDefaultJVMPath()
-            if not os.path.exists(jvm_path):
-                raise FileNotFoundError(f"JVM shared library file not found: {jvm_path}")
-            jpype.startJVM(jvm_path, convertStrings=False)  # Verhindert automatische String-Konvertierung
-    except Exception as e:
-        print(f"JVM Initialisierungsfehler: {str(e)}")
-        print("Verwende Fallback-Methode...")
-        # Hier könnte eine alternative Implementierung erfolgen
-
-def process_pdf_with_encoding(filepath, output_format):
-    """Verarbeitet PDF mit verbesserter Tabellenerkennung und extrahiert alle Tabellen"""
-    try:
-        all_tables = []
-        
-        # Erste Erkennung mit angepassten Parametern für Fahrzeugtabellen
-        tables_lattice = tabula.read_pdf(
-            filepath,
-            pages='all',
-            multiple_tables=True,
-            lattice=True,
-            guess=True,
-            silent=True,
-            encoding='utf-8',
-            pandas_options={'header': 0}  # Erste Zeile als Header
-        )
-        
-        # Zweite Erkennung: Stream-Modus für Tabellen ohne Linien
-        tables_stream = tabula.read_pdf(
-            filepath,
-            pages='all',
-            multiple_tables=True,
-            lattice=False,
-            stream=True,
-            guess=True,
-            silent=True,
-            encoding='utf-8'
-        )
-        
-        # Kombiniere alle Erkennungsmethoden
-        all_detected_tables = tables_lattice + tables_stream
-        
-        # Verarbeite die gefundenen Tabellen
-        for table in all_detected_tables:
-            if isinstance(table, pd.DataFrame) and len(table) > 0:
-                # Grundlegende Bereinigung
-                table = table.dropna(how='all')
-                table = table.dropna(how='all', axis=1)
-                table = table.fillna('')
-                
-                # Konvertiere zu String für einheitliche Verarbeitung
-                table = table.astype(str)
-                
-                if not table.empty and is_valid_table(table):
-                    all_tables.append(table)
-                    print(f"Gültige Tabelle gefunden mit {len(table)} Zeilen und {len(table.columns)} Spalten")
+            # Konvertiere zu String für einheitliche Verarbeitung
+            table = table.astype(str)
+            
+            if not table.empty and is_valid_table(table):
+                all_tables.append(table)
+                print(f"Gültige Tabelle gefunden mit {len(table)} Zeilen und {len(table.columns)} Spalten")
 
         return all_tables
 
@@ -544,64 +534,58 @@ def extract_auflagen_codes(tables):
 def extract():
     if not check_java():
         return "Fehler: Java muss installiert sein, um diese Anwendung zu nutzen.", 500
-        return render_template('index.html', debug_mode=True)
+    
     if 'file' not in request.files:
         return 'Keine Datei ausgewählt', 400
-    if not check_java():
-        return "Fehler: Java muss installiert sein, um diese Anwendung zu nutzen.", 500
+    
     file = request.files['file']
     if file.filename == '':
         return 'Keine Datei ausgewählt', 400
+    
     output_format = request.form.get('format', 'csv')
-    file = request.files['file']
+    
     try:
-        if file.filename == '':
-            cleanup_temp_files()  # Bereinige alte temporäre Dateien
         filename = secure_filename(file.filename)
         pdf_path = os.path.join(app.config['UPLOAD_FOLDER'], filename)
         file.save(pdf_path)
         temp_storage.add_file(filename)  # Markiere PDF als aktiv
+        
         cleanup_temp_files()  # Bereinige alte temporäre Dateien
-        tables = process_pdf_with_encoding(pdf_path, output_format)
-        results = []
-        pdf_path = os.path.join(app.config['UPLOAD_FOLDER'], filename)
-        table_htmls = []
-        temp_storage.add_file(filename)  # Markiere PDF als aktiv
+        
         # Speichere die Original-PDF-ID für die Suche
         pdf_id = os.path.splitext(filename)[0]
         tables = process_pdf_with_encoding(pdf_path, output_format)
         results = []
+        table_htmls = []
+        
         for i, table in enumerate(tables):
             table = table.fillna('')
             table = table.astype(str)
-            id = os.path.splitext(filename)[0]
+            
             # Generiere HTML-Vorschau
             table_htmls.append(convert_table_to_html(table))
-            table = table.fillna('')
+            
             # Verwende PDF-ID im Dateinamen
             output_filename = f"{pdf_id}_table_{i+1}.{output_format}"
             output_path = os.path.join(app.config['UPLOAD_FOLDER'], output_filename)
-            table_htmls.append(convert_table_to_html(table))
+            
             if output_format == 'csv':
                 table.to_csv(output_path, index=False, encoding='utf-8-sig', sep=';')
-            else:t_filename = f"{pdf_id}_table_{i+1}.{output_format}"
-            try:
-                    output_path = os.path.join(app.config['UPLOAD_FOLDER'], output_filename)
+            else:
+                try:
                     table.to_excel(output_path, index=False, engine='openpyxl')
-            except ImportError:
+                except ImportError:
                     print("Installing openpyxl...")
                     subprocess.check_call([sys.executable, "-m", "pip", "install", "openpyxl"])
                     table.to_excel(output_path, index=False, engine='openpyxl')
-                    table.to_excel(output_path, index=False, engine='openpyxl')
+                    
             temp_storage.add_file(output_filename)  # Markiere Tabelle als aktiv
             results.append(output_filename)
-            subprocess.check_call([sys.executable, "-m", "pip", "install", "openpyxl"])
-            table.to_excel(output_path, index=False, engine='openpyxl')
-            temp_storage.add_file(output_filename)  # Markiere Tabelle als aktiv
-            results.append(output_filename)
+            
         # Extrahiere Auflagen-Codes und deren Texte
         auflagen_codes = extract_auflagen_codes(tables)
         extracted_texts = extract_auflagen_with_text(pdf_path)
+        
         # Erstelle Liste von AuflagenCode-Objekten mit den extrahierten Texten
         condition_codes = [
             AuflagenCode(
@@ -610,37 +594,27 @@ def extract():
             )
             for code in auflagen_codes
         ]
-        if not results:tion=extracted_texts.get(code, AUFLAGEN_TEXTE.get(code, "Keine Beschreibung verfügbar"))
-        return "Keine Tabellen in der PDF-Datei gefunden.", 400
-        for code in auflagen_codes:
+        
+        if not results:
+            return "Keine Tabellen in der PDF-Datei gefunden.", 400
+            
         # Automatische Bereinigung nach 1 Stunde
-
-def delayed_cleanup():
+        def delayed_cleanup():
             import time
-            time.sleep(3600)  # 1 Stunde wartenatei gefunden.", 400
+            time.sleep(3600)  # 1 Stunde warten
             for filename in results + [filename]:
                 temp_storage.remove_file(filename)
-def delayed_cleanup():
+                
         threading.Thread(target=delayed_cleanup).start()
-        time.sleep(3600)  # 1 Stunde warten
+        
         return render_template('results.html', 
             files=results, 
             tables=table_htmls,
             condition_codes=condition_codes,
             pdf_file=filename
         )
-        return render_template('results.html', 
-            files=results, 
-            tables=table_htmls,
-            condition_codes=condition_codes,
-            pdf_file=filename
-        )
-        except Exception as e:  files=results, 
-        import traceback    tables=table_htmls,
-        error_details = traceback.format_exc()ndition_codes,
-        error_msg = (       pdf_file=filename)
-            f"Fehler bei der PDF-Verarbeitung:\n"
-except Exception as e:
+        
+    except Exception as e:
         import traceback
         error_details = traceback.format_exc()
         error_msg = (
@@ -750,7 +724,7 @@ def search_vehicles():
         csv_pattern = f"{pdf_id}_table_*.csv"
         table_files = []
         for filename in os.listdir(app.config['UPLOAD_FOLDER']):
-            if filename.startswith(f"{pdf_id}_table_") und filename.endswith('.csv'):
+            if filename.startswith(f"{pdf_id}_table_") and filename.endswith('.csv'):
                 table_files.append(filename)
         
         print(f"Found table files: {table_files}")
@@ -912,7 +886,7 @@ def analyze_registration_freedom(filename):
         if not os.path.exists(pdf_filepath):
             print(f"PDF nicht gefunden: {pdf_filepath}")
             return 'PDF Datei nicht gefunden', 404
-        ):
+        
         # Sammle verfügbare Tabellendateien für diese PDF
         pdf_id = os.path.splitext(filename)[0]
         table_files = []
@@ -1238,7 +1212,7 @@ def export_analysis(filename):
         pdf_filepath = os.path.join(app.config['UPLOAD_FOLDER'], filename)
         if not os.path.exists(pdf_filepath):
             return 'PDF Datei nicht gefunden', 404
-        ):
+        
         # Sammle verfügbare Tabellendateien für diese PDF
         pdf_id = os.path.splitext(filename)[0]
         table_files = []
@@ -1314,11 +1288,11 @@ def export_analysis(filename):
 @app.route('/results/<filename>')
 def results(filename):
     """Rendert die Ergebnis-Seite für bereits extrahierte PDF-Dateien"""
-            try:
-                pdf_path = os.path.join(app.config['UPLOAD_FOLDER'], filename)
-                if not os.path.exists(pdf_path):
-                    return 'PDF Datei nicht gefunden', 404
-            
+    try:
+        pdf_path = os.path.join(app.config['UPLOAD_FOLDER'], filename)
+        if not os.path.exists(pdf_path):
+            return 'PDF Datei nicht gefunden', 404
+        
         # Sammle verfügbare Tabellendateien für diese PDF
         pdf_id = os.path.splitext(filename)[0]
         results = []
@@ -1371,57 +1345,7 @@ def results(filename):
                             condition_codes=condition_codes,
                             pdf_file=filename)
 
-    import traceback  
-    return f"Fehler beim Anzeigen der Ergebnisse: {str(e)}<br/><pre>{error_details}</pre>", 500        
-    error_details = traceback.format_exc()        
-  
-        
-# Status-Route für Debug-Zwecke
-@app.route('/status')
-def server_status():
-    """Gibt den aktuellen Server-Status zurück"""
-    import platform
-    import psutil
-    
-    try:
-        # System-Informationen
-        system_info = {
-            'system': platform.system(),
-            'python_version': platform.python_version(),
-            'uptime': round(psutil.boot_time()),
-            'cpu_usage': psutil.cpu_percent(interval=1),
-            'memory_usage': dict(psutil.virtual_memory()._asdict())
-        }
-        
-        # Aktive Routen
-        routes = [
-            {'path': rule.rule, 'methods': list(rule.methods), 'endpoint': rule.endpoint}
-            for rule in app.url_map.iter_rules()
-        ]
-        
-        # Datei-Status
-        files = os.listdir(app.config['UPLOAD_FOLDER'])
-        
-        return jsonify({
-            'status': 'ok',
-            'system': system_info,
-            'routes': routes,
-            'files': files
-        })
     except Exception as e:
-        return jsonify({
-            'status': 'error',
-            'error': str(e)
-        }), 500
-    except ImportError:
-        # Falls psutil nicht installiert ist
-        subprocess.check_call([sys.executable, "-m", "pip", "install", "psutil"])
-        return jsonify({
-            'status': 'reloading',
-            'message': 'Installiere notwendige Abhängigkeiten. Bitte erneut versuchen.'
-        })
-    except Exception as e:
-        return jsonify({
-            'status': 'error',
-            'error': str(e)
-        }), 500
+        import traceback
+        error_details = traceback.format_exc()
+        return f"Fehler beim Anzeigen der Ergebnisse: {str(e)}<br/><pre>{error_details}</pre>", 500

@@ -1,0 +1,19 @@
+# GitHub Copilot Instructions
+
+# 1. Verwende Englisch für code-spezifische Elemente wie Variablennamen, Funktionsnamen und Kommentare.
+# 2. Verwende Deutsch für alle benutzerorientierten Texte wie Zeichenketten und UI-Elemente.
+# 3. Halte Code-Vervollständigungen prägnant, um die Tokenlänge zu minimieren.
+# 4. Vermeide redundante oder übermäßig lange Kommentare und Variablennamen.
+# 5. Beschränke die Anzahl der Zeilen pro Code-Vervollständigung, um die Lesbarkeit zu verbessern.
+
+# Beispiel:
+def process_data(data):
+    # Process the data efficiently
+    result = []
+    for item in data:
+        if item is not None:
+            result.append(item)
+    return result
+
+# Benutzerorientierte Texte:
+benutzer_begruessung = "Willkommen zu meiner App!"
