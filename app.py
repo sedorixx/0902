@@ -11,42 +11,30 @@ import logging
 from werkzeug.utils import secure_filename
 import traceback
 from functools import lru_cache
-
-# Setup logging
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
-logger = logging.getLogger(__name__)
-
-# Define required packages
-required_packages = {
-    'flask': 'Flask',
-    'pandas': 'pandas',
-    'tabula-py': 'tabula',
-    'jpype1': 'jpype',
-    'openpyxl': 'openpyxl',
-    'pdfplumber': 'pdfplumber',
-    'flask-sqlalchemy': 'flask_sqlalchemy',
-    'psutil': 'psutil'
-}
-
-def check_and_install_packages():
-    """Überprüft und installiert fehlende Pakete"""
-    for package, import_name in required_packages.items():
-        try:
-            __import__(import_name.lower())
-        except ImportError:
-            logger.info(f"Installiere {package}...")
-            subprocess.check_call([sys.executable, "-m", "pip", "install", package])
-
-# Überprüfe und installiere Abhängigkeiten
-check_and_install_packages()
-
-# Jetzt importiere die benötigten Module
-from flask import Flask, render_template, request, send_file, url_for, jsonify
+from flask import Flask, render_template, request, send_file, jsonify
 import tabula
 import pdfplumber
 from flask_sqlalchemy import SQLAlchemy
 from extensions import db
 from models import AuflagenCode
+from utils import (
+    TemporaryStorage, check_and_install_packages, AUFLAGEN_CODES, AUFLAGEN_TEXTE,
+    convert_table_to_html, extract_vehicle_info, extract_wheel_tire_info,
+    save_to_database, find_condition_codes, analyze_freedom, is_valid_table
+)
+# Importiere die PDF-Extraktionsfunktionen
+from pdf_extractor import (
+    process_pdf_with_encoding, process_pdf_without_java,
+    extract_text_as_structured_table, extract_text_as_simple_table,
+    extract_auflagen_with_text, extract_auflagen_codes
+)
+
+# Setup logging
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+logger = logging.getLogger(__name__)
+
+# Überprüfe und installiere Abhängigkeiten
+check_and_install_packages(logger)
 
 # Initialize Flask app
 app = Flask(__name__)
@@ -70,121 +58,8 @@ db.init_app(app)
 # Ensure the upload folder exists
 os.makedirs(app.config['UPLOAD_FOLDER'], exist_ok=True)
 
-# Constants - Auflagen codes and texts
-AUFLAGEN_CODES = [
-    "155", 
-    "A01", "A02", "A03", "A04", "A05", "A06", "A07", "A08", "A09", "A10",
-    "A11", "A12", "A13", "A14", "A14a", "A15", "A58"
-]
-
-AUFLAGEN_TEXTE = {
-    "155": "Das Sonderrad (gepr. Radlast) ist in Verbindung mit dieser Reifengröße nur zulässig bis zu einer zul. Achslast von 1550 kg...",
-    "A01": "Nach Durchführung der Technischen Änderung ist das Fahrzeug unter Vorlage der vorliegenden ABE unverzüglich einem amtlich anerkannten Sachverständigen einer Technischen Prüfstelle vorzuführen.",
-    "A02": "Die Verwendung der Rad-/Reifenkombination ist nur zulässig an Fahrzeugen mit serienmäßiger Rad-/Reifenkombination in den Größen gemäß Fahrzeugpapieren.",
-    "A03": "Die Verwendung der Rad-/Reifenkombination ist nur zulässig, sofern diese in den entsprechenden Fahrzeugpapieren eingetragen ist.",
-    "A04": "Die Rad-/Reifenkombination ist nur zulässig für Fahrzeugausführungen mit Allradantrieb.",
-    "A05": "Die Rad-/Reifenkombination ist nur zulässig für Fahrzeugausführungen mit Heckantrieb.",
-    "A06": "Die Rad-/Reifenkombination ist nur zulässig für Fahrzeugausführungen mit Frontantrieb.",
-    "A07": "Die mindestens erforderlichen Geschwindigkeitsbereiche (PR-Zahl) und Tragfähigkeiten der verwendeten Reifen sind den Fahrzeugpapieren zu entnehmen.",
-    "A08": "Verwendung nur zulässig an Fahrzeugen mit serienmäßiger Rad-/Reifenkombination gemäß EG-Typgenehmigung.",
-    "A09": "Die Rad-/Reifenkombination ist nur an der Vorderachse zulässig.",
-    "A10": "Es dürfen nur feingliedrige Schneeketten an der Hinterachse verwendet werden.",
-    "A11": "Es dürfen nur feingliedrige Schneeketten an der Antriebsachse verwendet werden.",
-    "A12": "Die Verwendung von Schneeketten ist nicht zulässig.",
-    "A13": "Nur zulässig für Fahrzeuge ohne Schneekettenbetrieb.",
-    "A14": "Zum Auswuchten der Räder dürfen an der Felgenaußenseite nur Klebegewichte unterhalb der Felgenschulter angebracht werden.",
-    "A14a": "Zum Auswuchten der Räder dürfen an der Felgenaußenseite keine Gewichte angebracht werden.",
-    "A15": "Die Verwendung des Rades mit genannter Einpresstiefe ist nur zulässig, wenn das Fahrzeug serienmäßig mit Rädern dieser Einpresstiefe ausgerüstet ist.",
-    "A58": "Rad-/Reifenkombination(en) nicht zulässig an Fahrzeugen mit Allradantrieb.",
-    "Lim": "Nur zulässig für Limousinen-Ausführungen des Fahrzeugtyps.",
-    "NoH": "Die Verwendung an Fahrzeugen mit Niveauregulierung ist nicht zulässig."
-}
-
-# File and JVM Management Classes
-class TemporaryStorage:
-    """Verwaltet temporäre Dateien mit automatischer Bereinigung"""
-    def __init__(self, base_dir):
-        self.base_dir = base_dir
-        self.active_files = set()
-        self.lock = threading.Lock()
-    
-    def add_file(self, filename):
-        """Markiert eine Datei als aktiv"""
-        with self.lock:
-            self.active_files.add(filename)
-    
-    def remove_file(self, filename):
-        """Entfernt eine Datei aus dem aktiven Set und löscht sie"""
-        with self.lock:
-            if filename in self.active_files:
-                self.active_files.remove(filename)
-                filepath = os.path.join(self.base_dir, filename)
-                try:
-                    if os.path.exists(filepath):
-                        os.remove(filepath)
-                except Exception as e:
-                    logger.error(f"Fehler beim Löschen von {filepath}: {e}")
-    
-    def cleanup_inactive(self):
-        """Löscht alle inaktiven Dateien"""
-        try:
-            with self.lock:
-                for filename in os.listdir(self.base_dir):
-                    if filename not in self.active_files:
-                        filepath = os.path.join(self.base_dir, filename)
-                        try:
-                            if os.path.isfile(filepath):
-                                os.remove(filepath)
-                        except Exception as e:
-                            logger.error(f"Fehler beim Löschen von {filepath}: {e}")
-        except Exception as e:
-            logger.error(f"Fehler bei der Bereinigung: {e}")
-
-class JVMManager:
-    """Manages JVM initialization and shutdown"""
-    _instance = None
-    _lock = threading.Lock()
-    
-    @classmethod
-    def get_instance(cls):
-        if cls._instance is None:
-            with cls._lock:
-                if cls._instance is None:
-                    cls._instance = JVMManager()
-        return cls._instance
-    
-    def __init__(self):
-        self.initialized = False
-    
-    def initialize(self):
-        """Initialize the JVM if not already started"""
-        if not self.initialized and not jpype.isJVMStarted():
-            try:
-                jvm_path = jpype.getDefaultJVMPath()
-                if not os.path.exists(jvm_path):
-                    raise FileNotFoundError(f"JVM shared library file not found: {jvm_path}")
-                jpype.startJVM(jvm_path, convertStrings=False)
-                self.initialized = True
-                logger.info("JVM successfully initialized")
-            except Exception as e:
-                logger.error(f"JVM Initialisierungsfehler: {str(e)}")
-                logger.info("Verwende Fallback-Methode...")
-                return False
-        return True
-    
-    def shutdown(self):
-        """Shutdown the JVM if running"""
-        if self.initialized and jpype.isJVMStarted() and threading.current_thread() is threading.main_thread():
-            try:
-                jpype.shutdownJVM()
-                self.initialized = False
-                logger.info("JVM shut down")
-            except Exception as e:
-                logger.error(f"Error shutting down JVM: {e}")
-
 # Initialize managers
 temp_storage = TemporaryStorage(app.config['UPLOAD_FOLDER'])
-jvm_manager = JVMManager.get_instance()
 
 # Utility Functions
 def check_java():
@@ -233,243 +108,32 @@ def install_java():
         logger.error(f"Fehler bei der Java-Installation: {str(e)}")
         return False
 
-def process_pdf_with_encoding(pdf_path, output_format='csv'):
-    """Verarbeitet PDF-Datei mit Berücksichtigung der Kodierung für 1:1-Extraktion"""
-    # Prüfe, ob Java verfügbar ist
-    if not check_java():
-        logger.warning("Java nicht gefunden. Verwende Fallback-Methode.")
-        return process_pdf_without_java(pdf_path, output_format)
+# JVM Manager Klasse definieren
+class JVMManager:
+    def __init__(self):
+        self.jvm_started = False
         
-    all_tables = []
-    try:
-        # JVM initialisieren
-        jvm_manager.initialize()
-        
-        # Fokus auf Lattice-Modus (für Tabellen mit sichtbaren Linien)
-        # Dies ist am besten für strukturerhaltende 1:1-Extraktion
-        logger.info("Lattice-Modus für präzise Tabellenextraktion")
-        tables = tabula.read_pdf(
-            pdf_path, 
-            pages='all', 
-            multiple_tables=True,
-            lattice=True,
-            guess=False,
-            silent=True
-        )
-        
-        # Wenn keine Tabellen gefunden wurden oder sie unvollständig erscheinen, 
-        # versuchen wir den Stream-Modus als nächstes
-        if not tables or len(tables) == 0:
-            logger.info("Keine Tabellen im Lattice-Modus gefunden. Versuche Stream-Modus.")
-            tables = tabula.read_pdf(
-                pdf_path, 
-                pages='all', 
-                multiple_tables=True,
-                stream=True,
-                guess=False,
-                silent=True
-            )
-        
-        # Letzte Option: Kombination aus beiden mit Guess-Parameter
-        if not tables or len(tables) == 0:
-            logger.info("Versuche kombinierte Methode mit Guess-Parameter")
-            tables = tabula.read_pdf(
-                pdf_path,
-                pages='all',
-                multiple_tables=True,
-                stream=True,
-                lattice=True,
-                guess=True,
-                silent=True
-            )
-        
-        logger.info(f"Tabula hat insgesamt {len(tables)} potenzielle Tabellen gefunden")
-        
-        # Verarbeite alle gefundenen Tabellen mit minimaler Manipulation
-        for i, table in enumerate(tables):
-            logger.info(f"Prüfe Tabelle {i+1}: {table.shape[0]} Zeilen, {table.shape[1]} Spalten")
-            
-            # MINIMALE Nachbearbeitung - nur NaN durch leere Strings ersetzen
-            clean_table = table.fillna('')
-            
-            # Keine Validierung oder Filterung mehr - alle gefundenen Tabellen akzeptieren
-            all_tables.append(clean_table)
-            logger.info(f"Tabelle {i+1} hinzugefügt (1:1 Extraktion)")
+    def initialize(self):
+        if not jpype.isJVMStarted():
+            try:
+                jvm_path = jpype.getDefaultJVMPath()
+                jpype.startJVM(jvm_path, convertStrings=False)
+                self.jvm_started = True
+                logger.info("JVM erfolgreich initialisiert")
+            except Exception as e:
+                logger.error(f"Fehler beim Initialisieren der JVM: {str(e)}")
+                
+    def shutdown(self):
+        if jpype.isJVMStarted():
+            try:
+                jpype.shutdownJVM()
+                self.jvm_started = False
+                logger.info("JVM heruntergefahren")
+            except Exception as e:
+                logger.error(f"Fehler beim Herunterfahren der JVM: {str(e)}")
 
-        if not all_tables:
-            logger.warning("Keine Tabellen mit tabula gefunden. Versuche Fallback-Methode.")
-            return process_pdf_without_java(pdf_path, output_format)
-            
-        return all_tables
-
-    except Exception as e:
-        logger.error(f"Fehler bei der Tabellenextraktion mit tabula: {str(e)}")
-        logger.info("Versuche Fallback-Methode.")
-        return process_pdf_without_java(pdf_path, output_format)
-
-def process_pdf_without_java(pdf_path, output_format='csv'):
-    """Verarbeitet PDF-Datei ohne Java mit pdfplumber für 1:1-Extraktion"""
-    logger.info("Verwende pdfplumber für 1:1 PDF-Tabellenextraktion")
-    all_tables = []
-    
-    try:
-        import numpy as np
-        import pdfplumber
-        
-        with pdfplumber.open(pdf_path) as pdf:
-            for page_num, page in enumerate(pdf.pages):
-                logger.info(f"Verarbeite Seite {page_num+1} mit pdfplumber")
-                
-                # Standard-Tabelleneinstellungen - am besten für strukturerhaltende Extraktion
-                tables = page.extract_tables()
-                
-                # Nur wenn keine Tabellen gefunden wurden, verwenden wir alternative Einstellungen
-                if not tables:
-                    logger.info(f"Keine Standard-Tabellen auf Seite {page_num+1} gefunden. Versuche erweiterte Erkennung.")
-                    tables = page.extract_tables(table_settings={
-                        "vertical_strategy": "text", 
-                        "horizontal_strategy": "text",
-                        "snap_tolerance": 3,
-                        "join_tolerance": 3,
-                        "edge_min_length": 3,
-                        "min_words_vertical": 1,
-                        "min_words_horizontal": 1
-                    })
-                
-                logger.info(f"pdfplumber hat {len(tables)} Tabellen auf Seite {page_num+1} gefunden")
-                
-                for i, table_data in enumerate(tables):
-                    if not table_data:
-                        logger.info(f"Tabelle {i+1} auf Seite {page_num+1} ist leer")
-                        continue
-                    
-                    # Erstellen eines DataFrame mit EXAKT derselben Struktur wie die gefundene Tabelle
-                    headers = [f"Spalte_{j+1}" for j in range(len(table_data[0]))] if table_data[0] else []
-                    
-                    # Wenn die erste Zeile gute Überschriften enthält, nutze diese
-                    if all(str(h).strip() for h in table_data[0]):
-                        df = pd.DataFrame(table_data[1:], columns=table_data[0])
-                    else:
-                        df = pd.DataFrame(table_data, columns=headers)
-                    
-                    # Minimale Nachbearbeitung
-                    df = df.fillna('')
-                    
-                    all_tables.append(df)
-                    logger.info(f"Tabelle {i+1} auf Seite {page_num+1} hinzugefügt (1:1 Extraktion)")
-        
-        if not all_tables:
-            logger.warning("Keine Tabellen mit pdfplumber gefunden. Extrahiere Text als letzte Option.")
-            # Versuche als letzten Ausweg den gesamten Text zu extrahieren
-            return extract_text_as_structured_table(pdf_path)
-            
-        return all_tables
-
-    except Exception as e:
-        logger.error(f"Fehler bei der pdfplumber Extraktion: {str(e)}")
-        return extract_text_as_structured_table(pdf_path)
-
-def extract_text_as_structured_table(pdf_path):
-    """Extrahiert Text und versucht, eine Tabellenstruktur zu erkennen"""
-    logger.info("Versuche Text mit Strukturerkennung zu extrahieren")
-    try:
-        import pdfplumber
-        
-        all_tables = []
-        with pdfplumber.open(pdf_path) as pdf:
-            for page_num, page in enumerate(pdf.pages):
-                text = page.extract_text()
-                if not text:
-                    continue
-                
-                # Zeilen nach Zeilenumbrüchen trennen
-                lines = [line.strip() for line in text.split('\n') if line.strip()]
-                
-                # Versuchen wir, die Tabellenstruktur zu erkennen (suche nach Tabulatoren oder mehreren Leerzeichen)
-                rows = []
-                for line in lines:
-                    # Zuerst nach Tabs suchen
-                    if '\t' in line:
-                        cells = [cell.strip() for cell in line.split('\t')]
-                        rows.append(cells)
-                    else:
-                        # Nach mehreren Leerzeichen suchen (wahrscheinliche Zellentrennungen)
-                        split_pattern = re.compile(r'\s{2,}')
-                        cells = [cell.strip() for cell in split_pattern.split(line) if cell.strip()]
-                        if len(cells) > 1:  # Nur hinzufügen, wenn es wie eine Tabelle aussieht
-                            rows.append(cells)
-                
-                if rows:
-                    # Finde die maximale Anzahl von Spalten
-                    max_cols = max(len(row) for row in rows)
-                    
-                    # Fülle Zeilen mit weniger Spalten auf
-                    padded_rows = [row + [''] * (max_cols - len(row)) for row in rows]
-                    
-                    # Versuche zu erkennen, ob die erste Zeile eine Überschriftenzeile ist
-                    has_header = False
-                    if len(padded_rows) > 1:
-                        first_row = padded_rows[0]
-                        # Wenn die erste Zeile kürzer ist oder sich deutlich von den anderen unterscheidet
-                        # (z.B. enthält keine Zahlen, enthält nur Text), dann ist es wahrscheinlich eine Überschrift
-                        if all(not re.search(r'\d', cell) for cell in first_row) and \
-                           any(re.search(r'\d', cell) for row in padded_rows[1:] for cell in row):
-                            has_header = True
-                    
-                    if has_header:
-                        df = pd.DataFrame(padded_rows[1:], columns=padded_rows[0])
-                    else:
-                        df = pd.DataFrame(padded_rows, columns=[f"Spalte_{i+1}" for i in range(max_cols)])
-                    
-                    all_tables.append(df)
-                    logger.info(f"Strukturierte Texttabelle von Seite {page_num+1} extrahiert: {len(df)} Zeilen, {len(df.columns)} Spalten")
-        
-        if not all_tables:
-            # Als letzte Option, erstelle eine einfache Texttabelle
-            return extract_text_as_simple_table(pdf_path)
-            
-        return all_tables
-        
-    except Exception as e:
-        logger.error(f"Fehler bei der strukturierten Textextraktion: {str(e)}")
-        return extract_text_as_simple_table(pdf_path)
-
-def extract_text_as_simple_table(pdf_path):
-    """Letzte Fallback-Methode: Extrahiert Text als einfache Tabelle"""
-    logger.info("Extrahiere Text als einfache Tabelle (letzte Option)")
-    try:
-        import pdfplumber
-        
-        all_text = []
-        with pdfplumber.open(pdf_path) as pdf:
-            for page in pdf.pages:
-                text = page.extract_text()
-                if text:
-                    all_text.append(text)
-        
-        if not all_text:
-            logger.error("Kein Text in der PDF gefunden")
-            # Erstelle leere DataFrame mit Hinweis
-            return [pd.DataFrame([["Keine Tabellen oder Text in der PDF erkannt"]], columns=["Hinweis"])]
-            
-        # Kombiniere allen Text und teile nach Zeilen
-        combined_text = '\n'.join(all_text)
-        lines = [line for line in combined_text.split('\n') if line.strip()]
-        
-        if not lines:
-            logger.error("Keine Textzeilen gefunden")
-            return [pd.DataFrame([["Keine strukturierten Zeilen in der PDF gefunden"]], columns=["Hinweis"])]
-        
-        # Erstelle ein einfaches DataFrame mit dem Text
-        df = pd.DataFrame(lines, columns=["PDF-Textinhalt"])
-        
-        logger.info(f"Einfache Texttabelle mit {len(df)} Zeilen erstellt")
-        return [df]
-        
-    except Exception as e:
-        logger.error(f"Fehler beim finalen Fallback: {str(e)}")
-        # Erstelle generische Fehlertabelle
-        return [pd.DataFrame([["Fehler bei der Textextraktion: " + str(e)]], columns=["Fehler"])]
+# JVM Manager instanziieren
+jvm_manager = JVMManager()
 
 @app.route('/', methods=['GET'])
 def index():
@@ -575,226 +239,6 @@ def cleanup_temp_files():
 import atexit
 atexit.register(cleanup_temp_files)
 
-# Definiere Auflagen-Codes und Texte getrennt
-AUFLAGEN_CODES = [
-    "155", 
-    "A01", "A02", "A03", "A04", "A05", "A06", "A07", "A08", "A09", "A10",
-    "A11", "A12", "A13", "A14", "A14a", "A15", "A58"
-]
-
-AUFLAGEN_TEXTE = {
-    "155": "Das Sonderrad (gepr. Radlast) ist in Verbindung mit dieser Reifengröße nur zulässig bis zu einer zul. Achslast von 1550 kg...",
-    "A01": "Nach Durchführung der Technischen Änderung ist das Fahrzeug unter Vorlage der vorliegenden ABE unverzüglich einem amtlich anerkannten Sachverständigen einer Technischen Prüfstelle vorzuführen.",
-    "A02": "Die Verwendung der Rad-/Reifenkombination ist nur zulässig an Fahrzeugen mit serienmäßiger Rad-/Reifenkombination in den Größen gemäß Fahrzeugpapieren.",
-    "A03": "Die Verwendung der Rad-/Reifenkombination ist nur zulässig, sofern diese in den entsprechenden Fahrzeugpapieren eingetragen ist.",
-    "A04": "Die Rad-/Reifenkombination ist nur zulässig für Fahrzeugausführungen mit Allradantrieb.",
-    "A05": "Die Rad-/Reifenkombination ist nur zulässig für Fahrzeugausführungen mit Heckantrieb.",
-    "A06": "Die Rad-/Reifenkombination ist nur zulässig für Fahrzeugausführungen mit Frontantrieb.",
-    "A07": "Die mindestens erforderlichen Geschwindigkeitsbereiche (PR-Zahl) und Tragfähigkeiten der verwendeten Reifen sind den Fahrzeugpapieren zu entnehmen.",
-    "A08": "Verwendung nur zulässig an Fahrzeugen mit serienmäßiger Rad-/Reifenkombination gemäß EG-Typgenehmigung.",
-    "A09": "Die Rad-/Reifenkombination ist nur an der Vorderachse zulässig.",
-    "A10": "Es dürfen nur feingliedrige Schneeketten an der Hinterachse verwendet werden.",
-    "A11": "Es dürfen nur feingliedrige Schneeketten an der Antriebsachse verwendet werden.",
-    "A12": "Die Verwendung von Schneeketten ist nicht zulässig.",
-    "A13": "Nur zulässig für Fahrzeuge ohne Schneekettenbetrieb.",
-    "A14": "Zum Auswuchten der Räder dürfen an der Felgenaußenseite nur Klebegewichte unterhalb der Felgenschulter angebracht werden.",
-    "A14a": "Zum Auswuchten der Räder dürfen an der Felgenaußenseite keine Gewichte angebracht werden.",
-    "A15": "Die Verwendung des Rades mit genannter Einpresstiefe ist nur zulässig, wenn das Fahrzeug serienmäßig mit Rädern dieser Einpresstiefe ausgerüstet ist.",
-    "A58": "Rad-/Reifenkombination(en) nicht zulässig an Fahrzeugen mit Allradantrieb.",
-    "Lim": "Nur zulässig für Limousinen-Ausführungen des Fahrzeugtyps.",
-    "NoH": "Die Verwendung an Fahrzeugen mit Niveauregulierung ist nicht zulässig."
-}
-
-def extract_auflagen_with_text(pdf_path):
-    """Extrahiert Auflagen-Codes und deren zugehörige Texte aus der PDF"""
-    codes_with_text = {}
-    excluded_texts = [
-        "Technologiezentrum Typprüfstelle Lambsheim - Königsberger Straße 20d - D-67245 Lambsheim",
-    ]
-    collect_text = True  # Flag für die Textsammlung
-    current_section = ""  # Buffer für den aktuellen Textabschnitt
-
-    try:
-        with app.app_context():
-            db_codes = {code.code: code.description for code in AuflagenCode.query.all()}
-        
-        with pdfplumber.open(pdf_path) as pdf:
-            for page in pdf.pages:
-                text = page.extract_text()
-                if not text:
-                    continue
-
-                lines = text.split('\n')
-                for line in lines:
-                    line = line.strip()
-                    
-                    # Prüfe auf Ende der Auflagen
-                    if "Prüfort und Prüfdatum" in line:
-                        print("Extraktion beendet - 'Prüfort und Prüfdatum' gefunden")
-                        # Speichere letzten Abschnitt vor dem Beenden
-                        if current_section:
-                            code_match = re.match(r'^([A-Z][0-9]{1,3}[a-z]?|[0-9]{2,3})[\s\.:)](.+)', current_section)
-                            if code_match:
-                                code = code_match.group(1).strip()
-                                description = code_match.group(2).strip()
-                                if code in db_codes:
-                                    codes_with_text[code] = description
-                                    print(f"Letzter Code gespeichert: {code}")
-                        return codes_with_text  # Beende die Funktion sofort
-                    
-                    # Prüfe auf "Technologiezentrum"
-                    if "Technologiezentrum" in line:
-                        print("Technologie gefunden - Pausiere Extraktion")
-                        collect_text = False
-                        current_section = ""  # Verwerfe aktuellen Abschnitt
-                        continue
-
-                    # Prüfe auf neuen Auflagen-Code
-                    if re.match(r'^([A-Z][0-9]{1,3}[a-z]?|[0-9]{2,3})[\s\.:)]', line):
-                        print(f"Neuer Code gefunden: {line[:20]}...")
-                        
-                        # Speichere vorherigen Abschnitt wenn vorhanden
-                        if collect_text and current_section:
-                            code_match = re.match(r'^([A-Z][0-9]{1,3}[a-z]?|[0-9]{2,3})[\s\.:)](.+)', current_section)
-                            if code_match:
-                                code = code_match.group(1).strip()
-                                description = code_match.group(2).strip()
-                                if code in db_codes:
-                                    codes_with_text[code] = description
-                                    print(f"Gespeichert: {code}")
-                        
-                        collect_text = True  # Setze Extraktion fort
-                        current_section = line  # Starte neuen Abschnitt
-                        continue
-
-                    # Sammle Text wenn aktiv
-                    if collect_text and current_section:
-                        current_section += " " + line
-
-    except Exception as e:
-        print(f"Fehler beim Extrahieren der Auflagen-Texte: {str(e)}")
-        import traceback
-        print(traceback.format_exc())
-    
-    # Bereinige die gesammelten Texte
-    for code, text in codes_with_text.items():
-        text = re.sub(r'\s+', ' ', text)  # Entferne mehrfache Leerzeichen
-        text = text.strip()
-        codes_with_text[code] = text
-        print(f"Finaler Code {code}: {text[:100]}...")
-
-    return codes_with_text
-
-def save_to_database(codes_with_text):
-    """Speichert oder aktualisiert Auflagen-Codes und Texte in der Datenbank"""
-    try:
-        with app.app_context():
-            for code, description in codes_with_text.items():
-                # Prüfe, ob der Code bereits existiert
-                existing_code = AuflagenCode.query.filter_by(code=code).first()
-                
-                if existing_code:
-                    # Aktualisiere nur, wenn der Text sich geändert hat
-                    if existing_code.description != description:
-                        existing_code.description = description
-                        print(f"Aktualisiere Code {code} in der Datenbank")
-                else:
-                    # Füge neuen Code hinzu
-                    new_code = AuflagenCode(code=code, description=description)
-                    db.session.add(new_code)
-                    print(f"Füge neuen Code {code} zur Datenbank hinzu")
-            
-            db.session.commit()
-            print("Datenbank erfolgreich aktualisiert")
-            
-    except Exception as e:
-        print(f"Fehler beim Speichern in der Datenbank: {str(e)}")
-        db.session.rollback()
-
-def extract_auflagen_codes(tables):
-    codes = set()
-    code_pattern = re.compile(r"""
-        (?:
-            [A-Z][0-9]{1,3}[a-z]?|    # Bsp: A01, B123a
-            [0-9]{2,3}[A-Z]?|          # Bsp: 155, 12A
-            NoH|Lim                     # Spezielle Codes
-        )
-    """, re.VERBOSE)
-    
-    # Explizit erlaubte Spalten
-    allowed_columns = {
-        'reifenbezogene auflagen und hinweise',
-        'auflagen und hinweise',
-        'auflagen'
-    }
-
-    # Explizit ausgeschlossene Spalten
-    excluded_columns = {
-        'handelsbezeichnung',
-        'fahrzeug-typ',
-        'abe/ewg-nr',
-        'fahrzeugtyp',
-        'typ',
-        'abe',
-        'ewg-nr'
-    }
-
-    for table in tables:
-        # Konvertiere alle Werte zu Strings und normalisiere Spaltennamen
-        table_str = table.astype(str)
-        
-        # Normalisiere Spaltennamen (zu Kleinbuchstaben und ohne Sonderzeichen)
-        normalized_columns = {
-            col: col.strip().lower().replace('/', '').replace('-', '').replace(' ', '')
-            for col in table_str.columns
-        }
-
-        for original_col, normalized_col in normalized_columns.items():
-            # Überspringe explizit ausgeschlossene Spalten
-            if any(excl in normalized_col for excl in excluded_columns):
-                continue
-                
-            # Prüfe nur erlaubte Spalten
-            if any(allowed in normalized_col for allowed in allowed_columns):
-                for value in table_str[original_col]:
-                    matches = code_pattern.findall(str(value))
-                    codes.update(matches)
-    
-    # Extrahiere auch die Auflagen-Texte aus der PDF
-    pdf_path = os.path.join(app.config['UPLOAD_FOLDER'], request.files['file'].filename)
-    extracted_texts = extract_auflagen_with_text(pdf_path)
-    print(f"Gefundene Auflagen-Texte: {len(extracted_texts)}")  # Debug-Ausgabe
-    for code, text in extracted_texts.items():
-        print(f"Code {code}: {text[:100]}...")  # Debug-Ausgabe
-    
-    # Modifizierte Logik für das Speichern der Codes mit Texten
-    with app.app_context():
-        existing_codes = set(code.code for code in AuflagenCode.query.all())
-        new_codes = codes - existing_codes
-        
-        for code in new_codes:
-            description = extracted_texts.get(code)  # Versuche zuerst den extrahierten Text
-            if not description:  # Falls nicht gefunden, verwende Standard-Text
-                description = AUFLAGEN_TEXTE.get(code, "Keine Beschreibung verfügbar")
-            
-            new_code = AuflagenCode(
-                code=code,
-                description=description
-            )
-            db.session.add(new_code)
-        db.session.commit()
-
-    # Kombiniere gefundene Codes mit ihren Texten
-    codes_with_text = {}
-    for code in codes:
-        description = extracted_texts.get(code, AUFLAGEN_TEXTE.get(code, "Keine Beschreibung verfügbar"))
-        codes_with_text[code] = description
-    
-    # Speichere in der Datenbank
-    save_to_database(codes_with_text)
-    
-    return sorted(list(codes))
-
 @app.route('/extract', methods=['POST', 'GET'])  # GET-Methode hinzugefügt
 def extract():
     if not check_java():
@@ -823,7 +267,8 @@ def extract():
         logger.info(f"Starte Extraktion aus PDF: {pdf_path}")
         
         # Erhöhe die Wahrscheinlichkeit, dass Tabellen gefunden werden
-        tables = process_pdf_with_encoding(pdf_path, output_format)
+        # Übergebe die benötigten Funktionen und Objekte an die PDF-Extraktionsfunktionen
+        tables = process_pdf_with_encoding(pdf_path, output_format, logger, check_java, jvm_manager)
         
         # Sicherstellen, dass immer ein Ergebnis zurückgegeben wird
         if not tables:
@@ -885,8 +330,9 @@ def extract():
         # Auch wenn keine Tabellen gefunden wurden, versuchen wir, Codes direkt aus der PDF zu extrahieren
         auflagen_codes = []
         try:
-            auflagen_codes = extract_auflagen_codes(tables) 
-            extracted_texts = extract_auflagen_with_text(pdf_path)
+            # Übergebe die notwendigen Parameter an die verschobene Funktion
+            auflagen_codes = extract_auflagen_codes(tables, app, pdf_path, logger) 
+            extracted_texts = extract_auflagen_with_text(pdf_path, app, logger)
         except Exception as e:
             logger.error(f"Fehler bei der Auflagen-Extraktion: {str(e)}")
             extracted_texts = {}
@@ -1465,7 +911,7 @@ def analyze_freedom(codes, auflagen_db, vehicle_info, wheel_tire_info):
         })
         rating -= 10
     
-    if 'A02' in codes and 'A03' in codes:
+    if 'A02' in codes and 'A03' in codes:  # Lasse die zeile unverändert
         reasons.append({
             "type": "negative",
             "text": "Widersprüchliche Codes gefunden (A02 und A03) - im Zweifelsfall ist Eintragung erforderlich"
@@ -1520,7 +966,7 @@ def export_analysis(filename):
         pdf_id = os.path.splitext(filename)[0]
         table_files = []
         for file in os.listdir(app.config['UPLOAD_FOLDER']):
-            if file.startswith(f"{pdf_id}_table_") and (file.endswith('.csv') or file.endswith('.xlsx')):
+            if file.startswith(f"{pdf_id}_table_") and (file.endswith('.csv') or file.endswith('.xlsx')):  # lasse die zeile unverändert
                 table_files.append(file)
                 
         if not table_files:
@@ -1603,7 +1049,7 @@ def results(filename):
         
         # Finde alle generierten CSV/Excel-Dateien
         for file in os.listdir(app.config['UPLOAD_FOLDER']):
-            if file.startswith(f"{pdf_id}_table_") and (file.endswith('.csv') or file.endswith('.xlsx')):
+            if file.startswith(f"{pdf_id}_table_") and (file.endswith('.csv') or file.endswith('.xlsx')):   # lasse die zeile unverändert
                 results.append(file)
                 
                 # Lade den Inhalt für die Vorschau
@@ -1656,4 +1102,4 @@ def results(filename):
 # Flask-App starten
 if __name__ == "__main__":
     init_db()
-    app.run(debug=True, host='0.0.0.0', port=5000)
+    app.run(debug=True, host='0.0.0.0', port=5050)
