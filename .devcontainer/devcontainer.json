@@ -29,5 +29,8 @@
   },
   "forwardPorts": [
     8501
+  ],
+  "runArgs": [
+    "--memory=16g"  // Setzt das RAM-Limit auf 8 GB
   ]
 }

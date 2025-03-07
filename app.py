@@ -22,12 +22,15 @@ from utils import (
     convert_table_to_html, extract_vehicle_info, extract_wheel_tire_info,
     save_to_database, find_condition_codes, analyze_freedom, is_valid_table
 )
-# Importiere die PDF-Extraktionsfunktionen
 from pdf_extractor import (
     process_pdf_with_encoding, process_pdf_without_java,
     extract_text_as_structured_table, extract_text_as_simple_table,
     extract_auflagen_with_text, extract_auflagen_codes
 )
+from llm_service import LLMService  # Neue Import
+import gc
+import psutil
+import os
 
 # Setup logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
@@ -61,6 +64,9 @@ os.makedirs(app.config['UPLOAD_FOLDER'], exist_ok=True)
 # Initialize managers
 temp_storage = TemporaryStorage(app.config['UPLOAD_FOLDER'])
 
+# Initialize LLM Service
+llm_service = LLMService()
+
 # Utility Functions
 def check_java():
     """Überprüft die Java-Installation und gibt den Status zurück"""
@@ -75,35 +81,27 @@ def check_java():
 def install_java():
     """Versucht, Java automatisch zu installieren"""
     try:
-        # Betriebssystem erkennen
-        import platform
-        system = platform.system().lower()
+        # Prüfe ob Java bereits installiert ist
+        if check_java():
+            logger.info("Java ist bereits installiert")
+            return True
+            
+        logger.info("Versuche Java zu installieren...")
+        install_script = os.path.join(os.path.dirname(__file__), 'install_java.sh')
         
-        if system == 'linux':
-            logger.info("Versuche Java auf Linux zu installieren...")
-            # Überprüfen, ob apt, yum oder dnf verfügbar ist
-            if subprocess.call("which apt", shell=True, stdout=subprocess.PIPE) == 0:
-                subprocess.check_call(["sudo", "apt", "update"])
-                subprocess.check_call(["sudo", "apt", "install", "-y", "default-jre"])
-                return True
-            elif subprocess.call("which yum", shell=True, stdout=subprocess.PIPE) == 0:
-                subprocess.check_call(["sudo", "yum", "install", "-y", "java-11-openjdk"])
-                return True
-            elif subprocess.call("which dnf", shell=True, stdout=subprocess.PIPE) == 0:
-                subprocess.check_call(["sudo", "dnf", "install", "-y", "java-11-openjdk"])
-                return True
-        elif system == 'darwin':  # macOS
-            logger.info("Versuche Java auf macOS zu installieren...")
-            if subprocess.call("which brew", shell=True, stdout=subprocess.PIPE) == 0:
-                subprocess.check_call(["brew", "tap", "adoptopenjdk/openjdk"])
-                subprocess.check_call(["brew", "install", "--cask", "adoptopenjdk11"])
-                return True
-        elif system == 'windows':
-            logger.info("Automatische Java-Installation auf Windows wird nicht unterstützt")
-            # Windows-Installation ist komplexer und erfordert Administratorrechte
+        # Setze Ausführungsrechte
+        os.chmod(install_script, 0o755)
         
-        logger.error("Automatische Java-Installation nicht möglich")
-        return False
+        # Führe Installation aus
+        result = subprocess.run(['sudo', install_script], capture_output=True, text=True)
+        
+        if result.returncode == 0:
+            logger.info("Java-Installation erfolgreich")
+            return True
+        else:
+            logger.error(f"Fehler bei Java-Installation: {result.stderr}")
+            return False
+            
     except Exception as e:
         logger.error(f"Fehler bei der Java-Installation: {str(e)}")
         return False
@@ -135,6 +133,18 @@ class JVMManager:
 # JVM Manager instanziieren
 jvm_manager = JVMManager()
 
+def monitor_memory():
+    process = psutil.Process(os.getpid())
+    memory_info = process.memory_info()
+    logger.info(f"Speicherverbrauch: {memory_info.rss / 1024 / 1024:.2f} MB")
+
+@app.after_request
+def cleanup_after_request(response):
+    """Führt Speicherbereinigung nach jeder Anfrage durch"""
+    gc.collect()
+    monitor_memory()
+    return response
+
 @app.route('/', methods=['GET'])
 def index():
     java_installed = check_java()
@@ -143,15 +153,25 @@ def index():
 @app.route('/', methods=['POST'], endpoint='index_post')
 def index_post():
     """Endpunkt zum Versuch der Java-Installation"""
-    if install_java():
-        return jsonify({
-            'success': True,
-            'message': 'Java wurde erfolgreich installiert. Sie können die Anwendung jetzt nutzen.'
-        })
-    else:
+    try:
+        if install_java():
+            return jsonify({
+                'success': True,
+                'message': 'Java wurde erfolgreich installiert. Sie können die Anwendung jetzt nutzen.'
+            })
+        else:
+            # Genauere Fehlermeldung
+            return jsonify({
+                'success': False,
+                'message': 'Automatische Installation fehlgeschlagen. Bitte installieren Sie Java manuell:\n' +
+                          '- Windows: Laden Sie Java von https://adoptium.net herunter\n' +
+                          '- Linux: Nutzen Sie Ihren Paketmanager (apt/yum/dnf install java-11-openjdk)\n' +
+                          '- macOS: Nutzen Sie brew install --cask temurin'
+            }), 500
+    except Exception as e:
         return jsonify({
             'success': False,
-            'message': 'Automatische Installation fehlgeschlagen. Bitte installieren Sie Java manuell.'
+            'message': f'Installationsfehler: {str(e)}\nBitte installieren Sie Java manuell.'
         }), 500
 
 @app.route('/home', methods=['GET'])
@@ -183,7 +203,22 @@ def is_valid_table(df):
     return True
 
 def convert_table_to_html(df):
-    """Konvertiert DataFrame in formatiertes HTML"""
+    """Optimierte Version der DataFrame-zu-HTML Konvertierung"""
+    # Speicheroptimierung für große DataFrames
+    chunk_size = 1000
+    if len(df) > chunk_size:
+        html_parts = []
+        for i in range(0, len(df), chunk_size):
+            chunk = df.iloc[i:i+chunk_size]
+            html_parts.append(chunk.to_html(
+                classes='table table-striped table-hover',
+                index=False,
+                border=0,
+                escape=False,
+                na_rep=''
+            ))
+        return ''.join(html_parts)
+    
     return df.to_html(
         classes='table table-striped table-hover',
         index=False,
@@ -355,6 +390,10 @@ def extract():
                 
         threading.Thread(target=delayed_cleanup).start()
         
+        # Füge Speicherbereinigung nach der Verarbeitung hinzu
+        gc.collect()
+        monitor_memory()
+        
         return render_template('results.html', 
             files=results, 
             tables=table_htmls,
@@ -373,6 +412,10 @@ def extract():
             f"Details: {str(e)}\n{error_details}"
         )
         return error_msg, 500
+    finally:
+        # Stelle sicher, dass temporäre Dateien gelöscht werden
+        cleanup_temp_files()
+        gc.collect()
 
 @app.route('/download/<filename>')
 def download_file(filename):
@@ -557,17 +600,28 @@ def search_vehicles():
 
 # JVM-Handhabung verbessern
 def initialize_jvm():
-    """Initialisiert die JVM mit Fehlerbehandlung"""
+    """Initialisiert die JVM mit optimierten Einstellungen"""
     try:
         if not jpype.isJVMStarted():
             jvm_path = jpype.getDefaultJVMPath()
             if not os.path.exists(jvm_path):
-                raise FileNotFoundError(f"JVM shared library file not found: {jvm_path}")
-            jpype.startJVM(jvm_path, convertStrings=False)  # Verhindert automatische String-Konvertierung
+                raise FileNotFoundError(f"JVM nicht gefunden: {jvm_path}")
+                
+            # JVM-Optionen für bessere Stabilität
+            jvm_options = [
+                "-Xmx4G",  # Maximum Heap Size
+                "-Xms2G",  # Initial Heap Size
+                "-XX:+UseG1GC",  # G1 Garbage Collector
+                "-XX:MaxGCPauseMillis=100",  # Max GC Pause
+                "-Dfile.encoding=UTF-8"  # Encoding
+            ]
+            
+            jpype.startJVM(jvm_path, *jvm_options, convertStrings=False)
+            logger.info("JVM erfolgreich initialisiert")
+            
     except Exception as e:
-        print(f"JVM Initialisierungsfehler: {str(e)}")
-        print("Verwende Fallback-Methode...")
-        # Hier könnte eine alternative Implementierung erfolgen
+        logger.error(f"JVM Initialisierungsfehler: {e}")
+        raise
 
 def shutdown_jvm():
     if jpype.isJVMStarted():
@@ -717,6 +771,16 @@ def analyze_registration_freedom(filename):
         
         print(f"Analyse-Ergebnis: Eintragungsfrei={is_free}, Zuverlässigkeit={confidence}%")
         
+        # LLM-Analyse durchführen
+        llm_analysis = llm_service.analyze_codes_and_info(
+            codes=auflagencodes_found,
+            vehicle_info=vehicle_info,
+            wheel_tire_info=wheel_tire_info
+        )
+        
+        # Füge LLM-Analyse zu den Ergebnissen hinzu
+        analysis_summary += f"\n\nKI-Assistenten Analyse:\n{llm_analysis}"
+        
         return render_template(
             'ai_analysis.html',
             is_free=is_free,
@@ -726,6 +790,7 @@ def analyze_registration_freedom(filename):
             condition_codes=condition_codes,
             analysis_reasons=reasons,
             analysis_summary=analysis_summary,
+            llm_analysis=llm_analysis,
             pdf_file=filename
         )
         
